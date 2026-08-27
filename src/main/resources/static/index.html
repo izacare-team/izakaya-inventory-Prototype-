@@ -1,0 +1,1659 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>이자카야 매장관리</title>
+<meta name="theme-color" content="#ffffff" id="themeColor">
+<script>
+/* 저장된 테마를 화면이 그려지기 전에 적용한다 — 새로고침 때 흰 화면이 번쩍이지 않도록 */
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem('theme'); } catch (e) { /* 사생활 보호 모드 */ }
+  var dark = saved
+    ? saved === 'dark'
+    : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+})();
+</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <div id="view"></div>
+  <nav id="bottomNav">
+    <button class="nav-pill" data-r="home" onclick="go('home')">
+      <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>
+      </svg><span>홈</span>
+    </button>
+    <button class="nav-pill" data-r="inbound" onclick="go('inbound')">
+      <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v11"/><path d="M8 10.5 12 14.5l4-4"/><path d="M4 17v3h16v-3"/>
+      </svg><span>입고</span>
+    </button>
+    <button class="nav-pill" data-r="stock" onclick="go('stock')">
+      <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3 3.5 7.5v9L12 21l8.5-4.5v-9L12 3z"/><path d="M3.5 7.5 12 12l8.5-4.5"/><path d="M12 12v9"/>
+      </svg><span>재고</span>
+    </button>
+    <button class="nav-pill" data-r="dispose" onclick="go('dispose')">
+      <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10.5 11v5M13.5 11v5"/>
+      </svg><span>폐기</span>
+    </button>
+    <button class="nav-pill" data-r="audit" onclick="go('audit')">
+      <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 4.5H6.5a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 6.5 20.5h11a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H16"/>
+        <path d="M9 3h6v3H9z"/><path d="m9 13 2.2 2.2L15.5 11"/>
+      </svg><span>실사</span>
+    </button>
+  </nav>
+</div>
+
+<script>
+/* ===================== 공통 유틸 ===================== */
+const $view = document.getElementById('view');
+let me = null;                  // 로그인 사용자 {id, username, displayName, role}
+const isOwner = () => me?.role === 'OWNER';
+const fmtD = d => d ? d.replaceAll('-', '/').slice(5) : '';   // 2026-08-20 → 08/20
+const today = () => new Date().toISOString().slice(0, 10);
+
+async function api(url, opt) {
+  const res = await fetch(url, opt);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (res.status === 401 && !url.startsWith('/api/auth/')) {
+    me = null; go('login');
+    throw new Error(body?.error ?? '로그인이 필요합니다.');
+  }
+  if (!res.ok) throw new Error(body?.error ?? 'HTTP ' + res.status);
+  return body;
+}
+const postJson = (url, data) => api(url, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+});
+
+function go(route, arg) { location.hash = arg !== undefined ? route + '/' + arg : route; }
+
+/* ===================== 테마 (라이트 / 다크) ===================== */
+
+function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+
+function applyTheme(dark) {
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  // 모바일 주소창 색도 함께 (CSS 변수는 여기서 못 읽으므로 값을 직접 지정)
+  const meta = document.getElementById('themeColor');
+  if (meta) meta.content = dark ? '#1c1e21' : '#ffffff';
+}
+
+function toggleTheme() {
+  const dark = !isDark();
+  applyTheme(dark);
+  try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (e) { /* 무시 */ }
+}
+
+/** 헤더에 넣을 테마 버튼 — 라이트일 땐 달, 다크일 땐 해가 보인다 */
+function themeButtonHtml() {
+  return `<button class="icon-btn" title="라이트/다크 전환" onclick="toggleTheme()">
+    <svg class="mi mi-light" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-5.4-5.4c0-1.81.9-3.4 2.26-4.4A9.4 9.4 0 0 0 12 3z"/></svg>
+    <svg class="mi mi-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0-4.5a1 1 0 0 1 1 1V5a1 1 0 0 1-2 0V3.5a1 1 0 0 1 1-1zm0 16a1 1 0 0 1 1 1v1.5a1 1 0 0 1-2 0V19.5a1 1 0 0 1 1-1zM3.5 11H5a1 1 0 0 1 0 2H3.5a1 1 0 0 1 0-2zm15.5 0h1.5a1 1 0 0 1 0 2H19a1 1 0 0 1 0-2zM5.64 4.22 6.7 5.28a1 1 0 0 1-1.42 1.42L4.22 5.64a1 1 0 0 1 1.42-1.42zm12.72 12.72 1.06 1.06a1 1 0 0 1-1.42 1.42l-1.06-1.06a1 1 0 0 1 1.42-1.42zM18.36 4.22a1 1 0 0 1 1.42 1.42L18.72 6.7a1 1 0 0 1-1.42-1.42zM5.28 17.3a1 1 0 0 1 1.42 1.42l-1.06 1.06a1 1 0 0 1-1.42-1.42z"/></svg>
+  </button>`;
+}
+
+function topbar(title, backTo, extraHtml = '') {
+  return `<div class="topbar">
+    ${backTo !== undefined ? `<button class="back" onclick="go('${backTo}')">←</button>` : ''}
+    <h1>${title}</h1><div class="spacer"></div>${extraHtml}
+  </div>`;
+}
+
+/* ===================== 라우터 ===================== */
+window.addEventListener('hashchange', render);
+window.addEventListener('DOMContentLoaded', async () => {
+  try { me = await api('/api/auth/me'); } catch { me = null; }
+  render();
+});
+
+function render() {
+  closeStockSheet();   // 화면 전환 시 열려 있던 액션 시트 정리
+  const [route, arg] = (location.hash.replace('#', '') || 'home').split('/');
+  const authRoutes = ['login', 'signup'];
+  document.getElementById('bottomNav').style.display = me ? 'flex' : 'none';
+
+  if (!me && !authRoutes.includes(route)) { viewLogin(); return; }
+  if (me && authRoutes.includes(route)) { go('home'); return; }
+
+  document.querySelectorAll('.nav-pill').forEach(b =>
+    b.classList.toggle('on', b.dataset.r === route));
+  const views = {
+    login: viewLogin, signup: viewSignup, staff: viewStaff,
+    home: viewHome, stock: viewStock, inbound: () => viewInbound(arg), dispose: viewDispose,
+    audit: viewAudit, attendance: viewAttendance, calendar: viewCalendar,
+    reports: viewReports, 'report-new': viewReportNew, report: () => viewReportDetail(arg),
+    reserve: viewReserve, 'course-list': viewCourseList,
+    'reserve-new': viewReserveNew, 'reserve-list': viewReserveList,
+    reservation: () => viewReservationDetail(arg), tables: viewTables,
+    settings: viewSettings
+  };
+  (views[route] ?? viewHome)();
+  window.scrollTo(0, 0);
+}
+
+/* ===================== 로그인 / 회원가입 ===================== */
+function viewLogin() {
+  document.getElementById('bottomNav').style.display = 'none';
+  $view.innerHTML = `
+    <div style="display:flex; justify-content:flex-end">${themeButtonHtml()}</div>
+    <div style="margin-top:44px; text-align:center">
+      <h1 style="font-size:2rem">🍶 이자카야<br>매장관리</h1>
+    </div>
+    <div class="sketch" style="padding:20px; margin-top:20px">
+      <label class="field"><span>아이디</span><input id="lgId" autocomplete="username"></label>
+      <label class="field"><span>비밀번호</span>
+        <div class="pw-wrap">
+          <input id="lgPw" type="password" autocomplete="current-password">
+          <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="비밀번호 표시">👁</button>
+        </div></label>
+      <div style="text-align:center; margin-top:16px">
+        <button class="act" onclick="doLogin()">로그인</button>
+      </div>
+      <p id="lgMsg" class="msg" style="text-align:center"></p>
+      <p style="text-align:center" class="hint">계정이 없나요?
+        <a href="#signup" style="color:var(--blue); font-weight:700">회원가입</a></p>
+    </div>
+    <p class="hint" style="text-align:center; margin-top:14px">
+      데모 — 사장님 boss/1234 · 알바생 staff/1234 (가입 시 가게코드 <b>DEMO01</b>)</p>`;
+  document.getElementById('lgPw').addEventListener('keydown',
+    e => { if (e.key === 'Enter') doLogin(); });
+}
+async function doLogin() {
+  try {
+    me = await postJson('/api/auth/login', {
+      username: document.getElementById('lgId').value,
+      password: document.getElementById('lgPw').value
+    });
+    go('home'); render();
+  } catch (e) { showMsg('lgMsg', e.message, false); }
+}
+
+/** 비밀번호 표시/숨김 토글 — 눈 버튼을 누르면 입력한 값을 확인할 수 있다 */
+function togglePw(btn) {
+  const input = btn.parentElement.querySelector('input');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.textContent = show ? '🙈' : '👁';
+  btn.setAttribute('aria-label', show ? '비밀번호 숨기기' : '비밀번호 표시');
+}
+/** 아이디 입력에서 한글(자모·완성형)을 제거한다 — 아이디는 영문·숫자만 허용 */
+function stripHangul(input) {
+  const v = input.value.replace(/[ㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
+  if (v !== input.value) input.value = v;
+}
+
+function viewSignup() {
+  document.getElementById('bottomNav').style.display = 'none';
+  $view.innerHTML = topbar('회원가입', 'login') + `
+    <div class="sketch2" style="padding:20px">
+      <label class="field"><span>구분</span>
+        <select id="sgRole" onchange="toggleSignupRole()">
+          <option value="STAFF">알바생 (가입 후 사장님 승인 필요)</option>
+          <option value="OWNER">사장님 (바로 사용 가능)</option>
+        </select></label>
+      <label class="field" id="sgStoreCodeWrap"><span>가게 코드</span>
+        <input id="sgStoreCode" placeholder="사장님께 받은 코드"
+               autocapitalize="characters" style="text-transform:uppercase"></label>
+      <label class="field" id="sgStoreNameWrap" hidden><span>가게 이름</span>
+        <input id="sgStoreName" placeholder="예: 이자카야 하나비"></label>
+      <label class="field"><span>이름</span><input id="sgName" placeholder="예: 김가현"></label>
+      <label class="field"><span>아이디</span>
+        <input id="sgId" autocomplete="username" placeholder="영문·숫자" oninput="stripHangul(this)"></label>
+      <label class="field"><span>비밀번호</span>
+        <div class="pw-wrap">
+          <input id="sgPw" type="password" autocomplete="new-password">
+          <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="비밀번호 표시">👁</button>
+        </div></label>
+      <label class="field"><span>비밀번호 확인</span>
+        <div class="pw-wrap">
+          <input id="sgPw2" type="password" autocomplete="new-password">
+          <button type="button" class="pw-toggle" onclick="togglePw(this)" aria-label="비밀번호 표시">👁</button>
+        </div></label>
+      <div style="text-align:center; margin-top:16px">
+        <button class="act" onclick="doSignup()">가입하기</button>
+      </div>
+      <p id="sgMsg" class="msg" style="text-align:center"></p>
+    </div>`;
+}
+function toggleSignupRole() {
+  const isOwner = document.getElementById('sgRole').value === 'OWNER';
+  document.getElementById('sgStoreNameWrap').hidden = !isOwner;
+  document.getElementById('sgStoreCodeWrap').hidden = isOwner;
+}
+async function doSignup() {
+  const isOwner = document.getElementById('sgRole').value === 'OWNER';
+  const pw = document.getElementById('sgPw').value;
+  const pw2 = document.getElementById('sgPw2').value;
+  if (pw !== pw2) { showMsg('sgMsg', '비밀번호가 일치하지 않습니다.', false); return; }
+  try {
+    const r = await postJson('/api/auth/signup', {
+      role: document.getElementById('sgRole').value,
+      displayName: document.getElementById('sgName').value,
+      username: document.getElementById('sgId').value,
+      password: pw,
+      storeName: isOwner ? document.getElementById('sgStoreName').value : null,
+      storeCode: isOwner ? null : document.getElementById('sgStoreCode').value
+    });
+    if (isOwner && r.storeCode) {
+      // 사장님: 발급된 가게 코드를 크게 안내
+      $view.innerHTML = topbar('가게 개설 완료', 'login') + `
+        <div class="sketch" style="padding:24px; text-align:center; margin-top:20px">
+          <p style="font-weight:700; font-size:1.2rem">${r.storeName}</p>
+          <p class="hint">${r.message}</p>
+          <div style="font-size:2.2rem; font-weight:700; letter-spacing:4px;
+                      background:var(--yellow); border:2.5px solid var(--ink);
+                      border-radius:12px; padding:14px; margin:16px 0">${r.storeCode}</div>
+          <p class="hint">직원은 이 코드로 가입·로그인합니다. 가게 설정에서 다시 볼 수 있어요.</p>
+          <button class="act" style="margin-top:10px" onclick="go('login')">로그인하러 가기</button>
+        </div>`;
+      return;
+    }
+    showMsg('sgMsg', r.message, true);
+    setTimeout(() => go('login'), 1600);
+  } catch (e) { showMsg('sgMsg', e.message, false); }
+}
+async function doLogout() {
+  await postJson('/api/auth/logout', {});
+  me = null; go('login'); render();
+}
+
+/* ===================== 직원 관리 (사장님 전용) ===================== */
+async function viewStaff() {
+  $view.innerHTML = topbar('직원 관리', 'home') + `
+    <p class="hint">퇴직 처리하면 로그인과 모든 기능 접근 권한이 즉시 사라집니다.</p>
+    <div id="staffList">불러오는 중...</div>
+    <p id="stMsg" class="msg"></p>`;
+  loadStaff();
+}
+async function loadStaff() {
+  const ROLE = { OWNER: '사장님', STAFF: '알바생' };
+  const STATUS = {
+    PENDING: '⏳ 승인 대기', ACTIVE: '✅ 근무 중',
+    REJECTED: '❌ 거절됨', RESIGNED: '🚪 퇴직'
+  };
+  try {
+    const members = await api('/api/admin/members');
+    document.getElementById('staffList').innerHTML = members.map(m => `
+      <div class="audit-row sketch2">
+        <span class="nm">${m.displayName}<br>
+          <span class="hint">${ROLE[m.role]} · ${m.username}</span></span>
+        <span style="font-weight:700; white-space:nowrap">${STATUS[m.status] ?? m.status}</span>
+        ${m.status === 'PENDING' ? `
+          <button class="act" style="padding:5px 12px; font-size:0.9rem"
+                  onclick="staffAction(${m.id}, 'approve')">승인</button>
+          <button class="act danger" style="padding:5px 12px; font-size:0.9rem"
+                  onclick="staffAction(${m.id}, 'reject')">거절</button>` : ''}
+        ${m.status === 'ACTIVE' && m.role !== 'OWNER' ? `
+          <button class="act danger" style="padding:5px 12px; font-size:0.9rem"
+                  onclick="confirmResign(${m.id}, '${m.displayName}')">퇴직 처리</button>` : ''}
+        ${(m.status === 'RESIGNED' || m.status === 'REJECTED') ? `
+          <button class="act" style="padding:5px 12px; font-size:0.9rem"
+                  onclick="staffAction(${m.id}, 'reinstate')">복직</button>` : ''}
+      </div>`).join('');
+  } catch (e) { showMsg('stMsg', e.message, false); }
+}
+
+/** 퇴직은 권한을 회수하는 되돌리기 어려운 작업이라 한 번 더 확인 */
+function confirmResign(id, name) {
+  if (!confirm(`${name}님을 퇴직 처리할까요?\n로그인과 모든 기능 접근 권한이 즉시 사라집니다.\n(복직 버튼으로 되돌릴 수 있습니다)`)) return;
+  staffAction(id, 'resign');
+}
+async function staffAction(id, action) {
+  try {
+    const m = await postJson(`/api/admin/members/${id}/${action}`, {});
+    const LABEL = { approve: '승인', reject: '거절', resign: '퇴직 처리', reinstate: '복직' };
+    showMsg('stMsg', `${m.displayName}님을 ${LABEL[action] ?? action}했습니다.`, true);
+    loadStaff();
+  }
+  catch (e) { showMsg('stMsg', e.message, false); }
+}
+
+/* ===================== 알림 (재고부족 · 예약 · 스케줄 통합) ===================== */
+const ALERT_META = {
+  LOW_STOCK:   { icon: '⚠',  cls: 'low',   label: '재고 부족' },
+  RESERVATION: { icon: '📅', cls: 'resv',  label: '새 예약' },
+  SCHEDULE:    { icon: '🕒', cls: 'sched', label: '근무 스케줄' },
+  SIGNUP:      { icon: '🙋', cls: 'member', label: '가입 신청' },
+  MEMBER:      { icon: '👤', cls: 'member', label: '직원 변동' },
+  NOTICE:      { icon: '📢', cls: 'notice', label: '새 공지' },
+  REPORT:      { icon: '📝', cls: 'notice', label: '새 일보' },
+  DISPOSE:     { icon: '🗑', cls: 'low',    label: '폐기' }
+};
+
+async function refreshAlerts() {
+  try {
+    const alerts = await api('/api/alerts');
+    window._alerts = alerts;
+    const badge = document.getElementById('alertBadge');
+    if (badge) {
+      badge.textContent = alerts.length;
+      badge.style.display = alerts.length > 0 ? 'inline-flex' : 'none';
+      badge.closest('.bell')?.classList.toggle('has-unread', alerts.length > 0);
+    }
+  } catch (e) { console.warn('알림 조회 실패:', e.message); }
+}
+
+/** 알림·대시보드 상세 줄을 눌렀을 때 — 펼쳐진 패널을 닫고 해당 화면으로 이동 */
+function openAlert(route, arg) {
+  const panel = document.getElementById('alertPanel');
+  if (panel) panel.hidden = true;
+  const detail = document.getElementById('dashDetail');
+  if (detail) { detail.hidden = true; dashOpenKey = null; markActiveStat(null); }
+  go(route, arg ?? undefined);
+}
+
+async function toggleAlertPanel() {
+  const panel = document.getElementById('alertPanel');
+  if (!panel) return;
+  if (!panel.hidden) { panel.hidden = true; return; }
+
+  // 열 때마다 새로 조회 — 캐시가 비어 있거나 갱신이 실패했어도 항상 최신 상태를 보여준다
+  panel.hidden = false;
+  panel.innerHTML = '<p class="hint" style="margin:6px">알림을 불러오는 중...</p>';
+
+  let alerts;
+  try {
+    alerts = await api('/api/alerts');
+    window._alerts = alerts;
+  } catch (e) {
+    panel.innerHTML = `<p class="msg error" style="margin:6px">
+      알림을 불러오지 못했습니다 — ${e.message}</p>`;
+    return;
+  }
+
+  panel.innerHTML = alerts.length === 0
+    ? '<p class="hint" style="margin:6px">새로운 알림이 없습니다 🎉</p>'
+    : alerts.map(a => {
+        const m = ALERT_META[a.type] ?? { icon: '•', cls: '', label: '' };
+        // 이동할 곳이 있으면 버튼으로 — 누르면 해당 화면으로 바로 간다
+        const go = a.route
+          ? `onclick="openAlert('${a.route}', ${a.arg === null ? 'null' : `'${a.arg}'`})"`
+          : '';
+        return `<${a.route ? 'button' : 'div'} class="alert-line ${m.cls}${a.route ? ' linked' : ''}" ${go}>
+          <span class="ico">${m.icon}</span><span class="txt">${a.message}</span>
+          ${a.createdAt ? `<span class="when">${a.createdAt.replace('T', ' ').slice(5, 16)}</span>` : ''}
+          ${a.route ? '<span class="chev">›</span>' : ''}
+        </${a.route ? 'button' : 'div'}>`;
+      }).join('');
+
+  const badge = document.getElementById('alertBadge');
+  if (badge) {
+    badge.textContent = alerts.length;
+    badge.style.display = alerts.length > 0 ? 'inline-flex' : 'none';
+    badge.closest('.bell')?.classList.toggle('has-unread', alerts.length > 0);
+  }
+
+  // 이벤트 알림(예약·스케줄)은 확인했으므로 읽음 처리 — 재고 부족은 재고가 채워져야 사라짐
+  if (alerts.some(a => a.id !== null)) {
+    try { await postJson('/api/alerts/read-all', {}); refreshAlerts(); } catch { /* 무시 */ }
+  }
+}
+
+/* ===================== 홈 ===================== */
+async function viewHome() {
+  $view.innerHTML = topbar(`${me.storeName} 매장관리`, undefined, `
+      <span class="hint" style="font-weight:700; white-space:nowrap">${me.displayName}</span>
+      <button class="icon-btn bell" title="알림" onclick="toggleAlertPanel()">
+        <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+        <span id="alertBadge" class="bell-badge" style="display:none">0</span></button>
+      ${themeButtonHtml()}
+      <button class="icon-btn" title="로그아웃" onclick="doLogout()">
+        <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+      </button>`) + `
+    <div id="alertPanel" class="sketch2 alert-panel" hidden></div>
+    ${isOwner() ? '<div id="dashCard"></div>' : ''}
+    ${isOwner() ? '<div id="dashDetail" class="sketch2 dash-detail" hidden></div>' : ''}
+    <div class="home-grid">
+      <div class="notice-box sketch">
+        <h2>Notice</h2>
+        <div id="noticeList" class="hint">불러오는 중...</div>
+        ${isOwner() ? `
+        <form id="noticeForm" style="margin-top:14px">
+          <textarea name="title" class="notice-input" rows="3"
+                    placeholder="공지 내용을 입력하세요" required></textarea>
+          <div style="display:flex; gap:8px; margin-top:8px">
+            <input name="eventDate" type="date" value="${today()}" style="flex:1">
+            <button class="act" style="padding:6px 18px">등록</button>
+          </div>
+        </form>` : ''}
+      </div>
+      <div class="side-btns">
+        <button class="side-btn b-gray"   onclick="go('attendance')">출근</button>
+        <button class="side-btn b-blue"   onclick="go('calendar')">일정</button>
+        <button class="side-btn b-red"    onclick="go('reports')">일보</button>
+        <button class="side-btn b-purple" onclick="go('reserve')">예약</button>
+        ${isOwner() ? `<button class="side-btn b-green" onclick="go('staff')">직원</button>` : ''}
+        ${isOwner() ? `<button class="side-btn b-gray" onclick="go('settings')">설정</button>` : ''}
+      </div>
+    </div>
+    <p id="homeMsg" class="msg"></p>`;
+
+  const form = document.getElementById('noticeForm');
+  if (form) form.onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      await postJson('/api/notices', { title: f.get('title'), eventDate: f.get('eventDate') });
+      loadNotices(); e.target.reset();
+      e.target.eventDate.value = today();
+    } catch (err) { showMsg('homeMsg', err.message, false); }
+  };
+  loadNotices();
+  refreshAlerts();
+  if (isOwner()) loadDashboard();
+}
+
+/** 사장님 홈 대시보드 요약 */
+async function loadDashboard() {
+  try {
+    const d = await api('/api/dashboard');
+    const card = document.getElementById('dashCard');
+    if (!card) return;
+    card.className = 'sketch2 dash-card';
+    card.innerHTML = DASH_STATS.map(s => `
+      <button class="dash-stat ${s.cls}" data-k="${s.key}" onclick="toggleDashDetail('${s.key}')">
+        <span class="num">${d[s.field]}</span>
+        <span class="label">${s.label}</span>
+      </button>`).join('');
+  } catch { /* 무시 */ }
+}
+
+/** 대시보드 항목 정의 — 숫자를 누르면 같은 key로 상세를 펼친다 */
+const DASH_STATS = [
+  { key: 'todayReservations', field: 'todayReservations', label: '오늘 예약', cls: 'purple', empty: '오늘 예약이 없습니다.' },
+  { key: 'onDuty',            field: 'onDutyCount',       label: '근무 중',   cls: 'green',  empty: '현재 근무 중인 직원이 없습니다.' },
+  { key: 'lowStock',          field: 'lowStockCount',     label: '재고 부족', cls: 'red',    empty: '부족한 품목이 없습니다.' },
+  { key: 'unreadAlerts',      field: 'unreadAlerts',      label: '새 알림',   cls: 'blue',   empty: '새로운 알림이 없습니다.' }
+];
+
+let dashOpenKey = null;
+
+/** 숫자 카드를 눌러 상세 목록을 펼치거나 접는다 */
+async function toggleDashDetail(key) {
+  const box = document.getElementById('dashDetail');
+  if (!box) return;
+
+  // 같은 항목을 다시 누르면 닫기
+  if (dashOpenKey === key && !box.hidden) {
+    box.hidden = true; dashOpenKey = null; markActiveStat(null); return;
+  }
+  dashOpenKey = key;
+  markActiveStat(key);
+  box.hidden = false;
+
+  const meta = DASH_STATS.find(s => s.key === key);
+  box.innerHTML = `<div class="dash-detail-head">${meta.label}</div>
+    <p class="hint" style="margin:8px 2px">불러오는 중...</p>`;
+
+  try {
+    const detail = await api('/api/dashboard/details');
+    const rows = detail[key] ?? [];
+    box.innerHTML = `<div class="dash-detail-head">${meta.label}
+        <span class="count">${rows.length}</span></div>`
+      + (rows.length === 0
+          ? `<p class="hint" style="margin:8px 2px">${meta.empty}</p>`
+          : `<ul class="dash-detail-list">${rows.map(r => r.route
+              ? `<li><button class="detail-link"
+                     onclick="openAlert('${r.route}', ${r.arg === null ? 'null' : `'${r.arg}'`})">
+                     <span class="txt">${r.text}</span><span class="chev">›</span></button></li>`
+              : `<li>${r.text}</li>`).join('')}</ul>`);
+  } catch (e) {
+    box.innerHTML = `<p class="msg error" style="margin:6px 2px">${e.message}</p>`;
+  }
+}
+
+function markActiveStat(key) {
+  document.querySelectorAll('.dash-stat').forEach(b =>
+    b.classList.toggle('on', b.dataset.k === key));
+}
+
+async function loadNotices() {
+  const box = document.getElementById('noticeList');
+  try {
+    const notices = await api('/api/notices');
+    box.className = '';
+    box.innerHTML = notices.length === 0 ? '<p class="hint">등록된 공지가 없습니다</p>' :
+      notices.map(n => `<div class="notice-item" style="flex-direction:column; align-items:stretch">
+        <div style="display:flex; justify-content:space-between; gap:8px">
+          <span style="white-space:pre-wrap">${n.title} ${fmtD(n.eventDate)}${
+            n.edited ? `<button class="edited-btn" onclick="toggleNoticeHistory(${n.id})">수정됨</button>` : ''}</span>
+          ${isOwner() ? `<span style="white-space:nowrap">
+              <button class="del" style="color:var(--blue)" onclick="startEditNotice(${n.id})">수정</button>
+              <button class="del" onclick="delNotice(${n.id})">x</button></span>` : ''}
+        </div>
+        <div id="nhist-${n.id}" hidden></div>
+        <div id="nedit-${n.id}" hidden></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
+          ${n.ackedByMe
+            ? `<span class="ack-done">✓ 확인했습니다</span>`
+            : `<button class="ack-btn" onclick="ackNotice(${n.id})">확인했습니다</button>`}
+          <span class="hint" style="margin-left:10px; text-align:right">
+            확인 ${n.ackCount}명${isOwner() && n.ackedNames.length
+              ? `<br>(${n.ackedNames.join(', ')})` : ''}</span>
+        </div>
+      </div>`).join('');
+    window._notices = notices;
+  } catch (e) { box.textContent = '공지를 불러오지 못했습니다'; }
+}
+
+/** "수정됨" 배지 클릭 → 수정 전 내용 표시 */
+async function toggleNoticeHistory(id) {
+  const box = document.getElementById('nhist-' + id);
+  if (!box.hidden) { box.hidden = true; return; }
+  const history = await api(`/api/notices/${id}/history`);
+  box.innerHTML = history.map(h => `<div class="history-box">
+      <div class="meta">수정 전 · ${h.editedBy ?? ''} ${h.editedAt.replace('T', ' ').slice(0, 16)}</div>
+      <div class="old">${h.previousTitle} ${fmtD(h.previousEventDate)}</div>
+    </div>`).join('');
+  box.hidden = false;
+}
+
+function startEditNotice(id) {
+  const n = (window._notices ?? []).find(x => x.id === id);
+  const box = document.getElementById('nedit-' + id);
+  if (!box.hidden) { box.hidden = true; return; }
+  box.innerHTML = `
+    <textarea id="ne-title-${id}" rows="3" style="margin-top:8px">${n.title}</textarea>
+    <div style="display:flex; gap:8px; margin-top:6px">
+      <input id="ne-date-${id}" type="date" value="${n.eventDate ?? ''}" style="flex:1">
+      <button class="act" style="padding:5px 14px" onclick="saveNotice(${id})">저장</button>
+      <button class="act gray" style="padding:5px 12px" onclick="startEditNotice(${id})">취소</button>
+    </div>`;
+  box.hidden = false;
+}
+async function saveNotice(id) {
+  try {
+    await api(`/api/notices/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: document.getElementById('ne-title-' + id).value,
+        eventDate: document.getElementById('ne-date-' + id).value || null
+      })
+    });
+    loadNotices();
+  } catch (e) { showMsg('homeMsg', e.message, false); }
+}
+async function ackNotice(id) {
+  try { await postJson(`/api/notices/${id}/ack`, {}); loadNotices(); }
+  catch (e) { showMsg('homeMsg', e.message, false); }
+}
+async function delNotice(id) {
+  await api('/api/notices/' + id, { method: 'DELETE' }); loadNotices();
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text; el.className = 'msg ' + (ok ? 'ok' : 'error');
+}
+
+/* ===================== 재고 목록 (품목 클릭 → 입고/폐기) ===================== */
+async function viewStock() {
+  $view.innerHTML = topbar('재고목록', 'home') +
+    `<p class="hint">부족한 품목이 맨 위로 정렬돼요. 품목을 누르면 바로 입고·폐기·수정할 수 있습니다.</p>
+     <div id="stockGrid" class="stock-grid"></div>
+     <p id="skMsg" class="msg" style="text-align:center"></p>`;
+  loadStockGrid();
+}
+
+async function loadStockGrid() {
+  const items = await api('/api/items');
+  // 부족할수록 위로 — 기준 대비 여유분이 적은 순, 같으면 수량이 적은 순
+  items.sort((a, b) =>
+    (a.quantity - a.minQuantity) - (b.quantity - b.minQuantity)
+    || a.quantity - b.quantity
+    || a.name.localeCompare(b.name, 'ko'));
+  window._items = items;
+  const color = i => i.quantity <= i.minQuantity ? 'red'
+                   : i.quantity <= i.minQuantity * 2 ? 'orange' : 'blue';
+  document.getElementById('stockGrid').innerHTML = items.map(i => `
+    <div class="stock-card ${color(i)}" style="cursor:pointer" onclick="openStockSheet(${i.id})">
+      <span class="nm">${i.name}</span>
+      <span class="qt">${i.quantity}${i.unit ?? '개'}</span>
+    </div>`).join('');
+  refreshAlerts();
+}
+
+/* 재고 카드 클릭 시 뜨는 액션 시트 */
+let sheetMode = 'in', sheetQty = 1, sheetItem = null;
+
+function openStockSheet(itemId) {
+  sheetItem = (window._items ?? []).find(i => i.id === itemId);
+  if (!sheetItem) return;
+  sheetMode = 'in'; sheetQty = 1;
+  const el = document.createElement('div');
+  el.className = 'sheet-backdrop';
+  el.id = 'stockSheet';
+  el.onclick = e => { if (e.target === el) closeStockSheet(); };
+  el.innerHTML = `
+    <div class="sheet">
+      <h3>${sheetItem.name}</h3>
+      <p class="cur">현재 ${sheetItem.quantity}${sheetItem.unit ?? '개'}
+         · 최소 ${sheetItem.minQuantity}</p>
+      <div class="seg">
+        <button id="segIn" class="on" onclick="setSheetMode('in')">입고</button>
+        <button id="segOut" onclick="setSheetMode('out')">폐기</button>
+        <button id="segSet" onclick="setSheetMode('set')">수정</button>
+      </div>
+      <p id="sheetHint" class="hint" style="text-align:center; margin:0" hidden>
+        고친 뒤의 재고 수량을 입력하세요</p>
+      <div class="stepper" style="margin:14px 0">
+        <button onclick="bumpSheet(-1)">−</button>
+        <input class="num" id="sheetNum" type="number" min="1" value="1" oninput="setSheetQty(this.value)">
+        <button onclick="bumpSheet(1)">+</button>
+      </div>
+      <div id="sheetMinWrap" hidden>
+        <label class="field"><span>재고 부족 기준 (이 수량 이하면 빨간색·알림)</span>
+          <input id="sheetMinQty" type="number" min="0" value="${sheetItem.minQuantity}"></label>
+      </div>
+      <div id="sheetReasonWrap" hidden>
+        <label class="field"><span>폐기 사유</span>
+          <select id="sheetReason">
+            <option>유통기한 경과</option><option>파손</option>
+            <option>변질</option><option>조리 실수</option><option>기타</option>
+          </select></label>
+      </div>
+      <div id="sheetNoteWrap">
+        <label class="field"><span>메모</span>
+          <input id="sheetNote" placeholder="예: 정기 발주분"></label>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:6px">
+        <button class="act gray" style="flex:1" onclick="closeStockSheet()">닫기</button>
+        <button class="act" id="sheetSubmit" style="flex:2" onclick="submitSheet()">입고 처리</button>
+      </div>
+      <p id="sheetMsg" class="msg" style="text-align:center"></p>
+    </div>`;
+  document.body.appendChild(el);
+}
+function closeStockSheet() { document.getElementById('stockSheet')?.remove(); }
+
+/** 입고 / 폐기 / 수정 — 'set'은 변동량이 아니라 "고친 뒤 수량"을 입력받는다 */
+function setSheetMode(mode) {
+  sheetMode = mode;
+  document.getElementById('segIn').className  = mode === 'in'  ? 'on' : '';
+  document.getElementById('segOut').className = mode === 'out' ? 'on dispose' : '';
+  document.getElementById('segSet').className = mode === 'set' ? 'on' : '';
+
+  document.getElementById('sheetReasonWrap').hidden = mode !== 'out';
+  document.getElementById('sheetNoteWrap').hidden   = mode !== 'in';
+  document.getElementById('sheetHint').hidden       = mode !== 'set';
+  document.getElementById('sheetMinWrap').hidden    = mode !== 'set';
+
+  // 수정은 현재 수량에서 출발하고 0도 허용, 입고/폐기는 1부터
+  const num = document.getElementById('sheetNum');
+  num.min = mode === 'set' ? 0 : 1;
+  sheetQty = mode === 'set' ? sheetItem.quantity : 1;
+  num.value = sheetQty;
+  if (mode === 'set') document.getElementById('sheetMinQty').value = sheetItem.minQuantity;
+
+  const btn = document.getElementById('sheetSubmit');
+  btn.textContent = mode === 'in' ? '입고 처리' : mode === 'out' ? '폐기 처리' : '수량 저장';
+  btn.className = mode === 'out' ? 'act danger' : 'act';
+}
+function sheetMin() { return sheetMode === 'set' ? 0 : 1; }
+function bumpSheet(d) {
+  sheetQty = Math.max(sheetMin(), sheetQty + d);
+  document.getElementById('sheetNum').value = sheetQty;
+}
+function setSheetQty(v) {
+  const n = Number(v);
+  sheetQty = Math.max(sheetMin(), Number.isFinite(n) ? n : sheetMin());
+}
+async function submitSheet() {
+  try {
+    // 수정은 품목 정보를, 입고·폐기는 변동 이력을 돌려준다
+    if (sheetMode === 'set') {
+      const item = await api(`/api/items/${sheetItem.id}/quantity`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantity: sheetQty,
+          minQuantity: Number(document.getElementById('sheetMinQty').value)
+        })
+      });
+      closeStockSheet();
+      await loadStockGrid();
+      showMsg('skMsg', `${item.name} → 현재 ${item.quantity}${item.unit ?? '개'}`
+        + ` · 부족 기준 ${item.minQuantity}`, true);
+      return;
+    }
+
+    const tx = sheetMode === 'in'
+      ? await postJson('/api/inbound', {
+          itemId: sheetItem.id, quantity: sheetQty,
+          note: document.getElementById('sheetNote').value
+        })
+      : await postJson('/api/dispose', {
+          itemId: sheetItem.id, quantity: sheetQty,
+          reason: document.getElementById('sheetReason').value
+        });
+    closeStockSheet();
+    await loadStockGrid();
+    showMsg('skMsg', `${tx.itemName} ${tx.quantityChange > 0 ? '+' : ''}${tx.quantityChange}`
+      + ` → 현재 ${tx.quantityAfter}`, true);
+  } catch (e) { showMsg('sheetMsg', e.message, false); }
+}
+
+/* ===================== 입고 / 폐기 (스테퍼) ===================== */
+let stepQty = 1;
+function stepperHtml() {
+  return `<div class="stepper">
+    <button onclick="bumpQty(-1)">−</button>
+    <input class="num" id="stepNum" type="number" min="1" value="${stepQty}" oninput="setStepQty(this.value)">
+    <button onclick="bumpQty(1)">+</button>
+  </div>`;
+}
+function bumpQty(d) {
+  stepQty = Math.max(1, stepQty + d);
+  document.getElementById('stepNum').value = stepQty;
+}
+function setStepQty(v) {
+  stepQty = Math.max(1, Number(v) || 1);
+}
+
+async function viewInbound(preselectItemId) {
+  stepQty = 1;
+  const items = await api('/api/items');
+  const preselect = preselectItemId ? Number(preselectItemId) : null;
+  $view.innerHTML = topbar('입고', 'home') + `
+    <label class="field"><span>입고 방식</span>
+      <select id="ibMode" onchange="toggleIbMode()">
+        <option value="existing">기존 품목</option>
+        <option value="new">신규 품목 (등록 + 입고)</option>
+      </select>
+    </label>
+    <div id="ibExisting">
+      <label class="field"><span>품목</span>
+        <select id="ibItem">${items.map(i =>
+          `<option value="${i.id}" ${i.id === preselect ? 'selected' : ''}>${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    <div id="ibNew" hidden>
+      <label class="field"><span>신규 품목명</span><input id="ibName" placeholder="예: 사과"></label>
+      <label class="field"><span>분류 / 단위</span>
+        <div style="display:flex; gap:8px">
+          <input id="ibCat" placeholder="분류"><input id="ibUnit" placeholder="단위">
+        </div>
+      </label>
+      <label class="field"><span>최소 수량 (재고 부족 기준)</span>
+        <input id="ibMin" type="number" min="0" value="0"></label>
+    </div>
+    ${stepperHtml()}
+    <label class="field"><span>메모</span><input id="ibNote" placeholder="예: 정기 발주분"></label>
+    <div style="text-align:center"><button class="act" onclick="submitInbound()">입고 처리</button></div>
+    <p id="ibMsg" class="msg" style="text-align:center"></p>`;
+}
+function toggleIbMode() {
+  const isNew = document.getElementById('ibMode').value === 'new';
+  document.getElementById('ibExisting').hidden = isNew;
+  document.getElementById('ibNew').hidden = !isNew;
+}
+async function submitInbound() {
+  const isNew = document.getElementById('ibMode').value === 'new';
+  const payload = { quantity: stepQty, note: document.getElementById('ibNote').value };
+  if (isNew) {
+    payload.newItemName = document.getElementById('ibName').value;
+    payload.category = document.getElementById('ibCat').value;
+    payload.unit = document.getElementById('ibUnit').value;
+    payload.minQuantity = Number(document.getElementById('ibMin').value || 0);
+  } else {
+    payload.itemId = Number(document.getElementById('ibItem').value);
+  }
+  try {
+    const tx = await postJson('/api/inbound', payload);
+    showMsg('ibMsg', `${tx.itemName} +${tx.quantityChange} → 현재 ${tx.quantityAfter}`, true);
+    stepQty = 1; document.getElementById('stepNum').value = 1;
+  } catch (e) { showMsg('ibMsg', e.message, false); }
+}
+
+async function viewDispose() {
+  stepQty = 1;
+  const items = await api('/api/items');
+  $view.innerHTML = topbar('폐기', 'home') + `
+    <label class="field"><span>품목</span>
+      <select id="dpItem">${items.map(i =>
+        `<option value="${i.id}">${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`).join('')}
+      </select>
+    </label>
+    ${stepperHtml()}
+    <label class="field"><span>폐기 사유</span>
+      <select id="dpReason">
+        <option>유통기한 경과</option><option>파손</option>
+        <option>변질</option><option>조리 실수</option><option>기타</option>
+      </select>
+    </label>
+    <div style="text-align:center"><button class="act danger" onclick="submitDispose()">폐기 처리</button></div>
+    <p id="dpMsg" class="msg" style="text-align:center"></p>`;
+}
+async function submitDispose() {
+  try {
+    const tx = await postJson('/api/dispose', {
+      itemId: Number(document.getElementById('dpItem').value),
+      quantity: stepQty,
+      reason: document.getElementById('dpReason').value
+    });
+    showMsg('dpMsg', `${tx.itemName} ${tx.quantityChange} (${tx.note}) → 현재 ${tx.quantityAfter}`, true);
+    stepQty = 1; document.getElementById('stepNum').value = 1;
+  } catch (e) { showMsg('dpMsg', e.message, false); }
+}
+
+/* ===================== 실사 (AI 사진 인식) ===================== */
+let currentAudit = null;
+
+async function viewAudit() {
+  $view.innerHTML = topbar('실사', 'home') + `
+    <p class="hint">사진을 찍으면 AI가 품목과 개수를 세서 기록(장부)과 비교합니다.
+       미등록 품목은 확정 시 자동 등록됩니다.</p>
+    <form id="scanForm" style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+      <input type="file" name="image" accept="image/*" capture="environment" required>
+      <button class="act" style="white-space:nowrap">촬영/인식</button>
+    </form>
+    <p id="scanMsg" class="msg"></p>
+    <div id="auditLines"></div>
+    <div id="auditActions" hidden style="text-align:center; margin:14px 0">
+      <button class="act" onclick="confirmAudit()">확정 (재고 반영)</button>
+      <button class="act gray" onclick="cancelAudit()">취소</button>
+    </div>
+    <p id="confirmMsg" class="msg" style="text-align:center"></p>`;
+
+  document.getElementById('scanForm').onsubmit = async e => {
+    e.preventDefault();
+    showMsg('scanMsg', 'AI 인식 중...', true);
+    try {
+      const res = await fetch('/api/audits/scan', { method: 'POST', body: new FormData(e.target) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error);
+      showMsg('scanMsg', `인식 완료 — ${body.lines.length}개 품목`, true);
+      renderAuditLines(body);
+    } catch (err) { showMsg('scanMsg', err.message, false); }
+  };
+}
+
+function renderAuditLines(audit) {
+  currentAudit = audit;
+  document.getElementById('auditLines').innerHTML = audit.lines.map(l => `
+    <div class="audit-row sketch2">
+      <span class="nm">${l.unregistered
+        ? `${l.recognizedName}<br><span class="badge-new">자동 등록 예정</span>`
+        : l.itemName}</span>
+      <span class="cols">기록<br><b>${l.unregistered ? 0 : l.systemQuantity}</b></span>
+      <span class="cols">실제<br>
+        <input type="number" min="0" value="${l.finalQuantity}" data-line="${l.id}"></span>
+      <button class="act gray" style="padding:4px 10px; font-size:0.9rem"
+              onclick="saveLine(${l.id})">저장</button>
+    </div>`).join('');
+  document.getElementById('auditActions').hidden = false;
+}
+
+async function saveLine(lineId) {
+  const input = document.querySelector(`input[data-line="${lineId}"]`);
+  try {
+    const audit = await api(`/api/audits/${currentAudit.id}/lines/${lineId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ finalQuantity: Number(input.value) })
+    });
+    renderAuditLines(audit);
+  } catch (e) { alert(e.message); }
+}
+async function confirmAudit() {
+  if (!currentAudit) return;
+  try {
+    await api(`/api/audits/${currentAudit.id}/confirm`, { method: 'POST' });
+    document.getElementById('auditLines').innerHTML = '';
+    document.getElementById('auditActions').hidden = true;
+    showMsg('confirmMsg', '확정 완료 — 재고 반영 및 미등록 품목 자동 등록', true);
+  } catch (e) { showMsg('confirmMsg', e.message, false); }
+}
+async function cancelAudit() {
+  if (!currentAudit) return;
+  await api(`/api/audits/${currentAudit.id}/cancel`, { method: 'POST' });
+  document.getElementById('auditLines').innerHTML = '';
+  document.getElementById('auditActions').hidden = true;
+  showMsg('confirmMsg', '실사를 취소했습니다', true);
+}
+
+/* ===================== 출근 ===================== */
+async function viewAttendance() {
+  $view.innerHTML = topbar('출근', 'home') + `
+    <p class="page-sub">${me.displayName}님의 근태 · ${today()}</p>
+    <div class="clock-list" id="clockList">불러오는 중...</div>
+    <p id="atMsg" class="msg" style="text-align:center"></p>`;
+  loadAttendance();
+}
+async function loadAttendance() {
+  const a = await api('/api/attendance/today');
+  const t = v => v ? v.slice(0, 5) : '';
+  // 각 단계는 하루에 한 번만 — 이미 찍었거나 아직 순서가 아니면 버튼을 잠근다
+  const steps = [
+    { action: 'clock-in',  label: '출근',      at: a.clockIn,  ready: !a.clockIn },
+    { action: 'break',     label: '휴게 시작', at: a.breakAt,  ready: !!a.clockIn && !a.breakAt && !a.clockOut },
+    { action: 'break-end', label: '휴게 종료', at: a.breakEnd, ready: !!a.breakAt && !a.breakEnd && !a.clockOut },
+    { action: 'clock-out', label: '퇴근',      at: a.clockOut,
+      ready: !!a.clockIn && !a.clockOut && (!a.breakAt || !!a.breakEnd) }
+  ];
+  // 아직 안 찍었으면 라벨만, 찍었으면 라벨(작게) + 기록된 시각(크게)
+  document.getElementById('clockList').innerHTML = steps.map(s => `
+    <button class="clock-btn${s.at ? ' done' : ''}" ${s.ready ? '' : 'disabled'}
+            onclick="clock('${s.action}')">
+      ${s.at
+        ? `<span class="clock-cap">${s.label}</span><span class="clock-at">${t(s.at)}</span>`
+        : `<span class="clock-label">${s.label}</span>`}
+    </button>`).join('');
+}
+async function clock(action) {
+  try {
+    await postJson('/api/attendance/clock', { action });
+    loadAttendance();
+  } catch (e) { showMsg('atMsg', e.message, false); }
+}
+
+/* ===================== 일정 (달력) ===================== */
+let calY, calM;   // 표시 중인 연/월
+async function viewCalendar(keepMonth) {
+  if (!keepMonth) { const d = new Date(); calY = d.getFullYear(); calM = d.getMonth() + 1; }
+  $view.innerHTML = topbar('일정', 'home',
+    isOwner() ? `<button class="act" style="padding:5px 12px; font-size:0.9rem"
+                         onclick="toggleScheduleForm()">근무 등록</button>` : '') + `
+    <div id="schedForm" hidden class="sketch2" style="padding:14px; margin-bottom:14px"></div>
+    <div class="cal-head">
+      <button onclick="moveMonth(-1)">◀</button>
+      <h2>${calY}년 ${String(calM).padStart(2, '0')}월</h2>
+      <button onclick="moveMonth(1)">▶</button>
+    </div>
+    <div class="cal-grid sketch2" style="padding:10px" id="calGrid"></div>
+    <div class="day-events" id="dayEvents"></div>`;
+
+  const [notices, reservations, schedules] = await Promise.all([
+    api('/api/notices'),
+    api(`/api/reservations/month?year=${calY}&month=${calM}`),
+    api(`/api/schedules/month?year=${calY}&month=${calM}`)
+  ]);
+  const events = {};
+  const addEv = (date, text) => { (events[date] ??= []).push(text); };
+  notices.filter(n => n.eventDate?.startsWith(`${calY}-${String(calM).padStart(2, '0')}`))
+         .forEach(n => addEv(n.eventDate, `📢 ${n.title}`));
+  reservations.forEach(r => addEv(r.reserveDate,
+      `📅 예약 ${r.timeSlot} ${r.people}명 (테이블 ${r.tableNumbers.join(', ')})`));
+  schedules.forEach(s => addEv(s.workDate,
+      `🕒 ${s.memberName} 근무 ${s.startTime ? s.startTime.slice(0, 5) : ''}`
+      + `${s.endTime ? '~' + s.endTime.slice(0, 5) : ''}`));
+
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = ['일','월','화','수','목','금','토'].map((d, i) =>
+    `<span class="dow ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}"
+           style="color:${i === 0 ? 'var(--red)' : i === 6 ? 'var(--blue)' : 'inherit'}">${d}</span>`).join('');
+
+  const first = new Date(calY, calM - 1, 1).getDay();
+  const days = new Date(calY, calM, 0).getDate();
+  for (let i = 0; i < first; i++) grid.innerHTML += '<span></span>';
+  for (let d = 1; d <= days; d++) {
+    const dateStr = `${calY}-${String(calM).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dow = (first + d - 1) % 7;
+    // 날짜 숫자를 <span>으로 감싸야 정확한 원이 그려진다 (칸은 가로가 더 넓음)
+    grid.innerHTML += `<button class="cal-cell ${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''}`
+      + `${dateStr === today() ? ' today' : ''}" onclick="showDay('${dateStr}', this)">`
+      + `<span class="d">${d}</span>`
+      + `${events[dateStr] ? '<span class="dot"></span>' : ''}</button>`;
+  }
+  window._calEvents = events;
+}
+function moveMonth(d) {
+  calM += d;
+  if (calM === 0) { calM = 12; calY--; }
+  if (calM === 13) { calM = 1; calY++; }
+  viewCalendar(true);
+}
+
+/* 근무 스케줄 등록 (사장님 전용) — 등록하면 해당 직원에게 알림이 간다 */
+async function toggleScheduleForm() {
+  const box = document.getElementById('schedForm');
+  if (!box.hidden) { box.hidden = true; return; }
+  const members = (await api('/api/admin/members'))
+    .filter(m => m.status === 'ACTIVE');
+  box.innerHTML = `
+    <h3 style="margin:0 0 10px">근무 스케줄 등록</h3>
+    <label class="field"><span>직원</span>
+      <select id="sc-member">${members.map(m =>
+        `<option value="${m.id}">${m.displayName}</option>`).join('')}</select></label>
+    <label class="field"><span>날짜</span>
+      <input id="sc-date" type="date" value="${today()}"></label>
+    <div style="display:flex; gap:8px">
+      <label class="field" style="flex:1"><span>시작</span>
+        <input id="sc-start" type="time" value="18:00"></label>
+      <label class="field" style="flex:1"><span>종료</span>
+        <input id="sc-end" type="time" value="22:00"></label>
+    </div>
+    <label class="field"><span>메모</span><input id="sc-memo" placeholder="예: 홀 담당"></label>
+    <div style="text-align:center">
+      <button class="act" onclick="submitSchedule()">등록 + 알림 발송</button></div>
+    <p id="scMsg" class="msg" style="text-align:center"></p>`;
+  box.hidden = false;
+}
+async function submitSchedule() {
+  try {
+    const s = await postJson('/api/schedules', {
+      memberId: Number(document.getElementById('sc-member').value),
+      workDate: document.getElementById('sc-date').value,
+      startTime: document.getElementById('sc-start').value,
+      endTime: document.getElementById('sc-end').value,
+      memo: document.getElementById('sc-memo').value
+    });
+    showMsg('scMsg', `${s.memberName}님에게 알림을 보냈습니다.`, true);
+    viewCalendar(true);
+  } catch (e) { showMsg('scMsg', e.message, false); }
+}
+function showDay(dateStr, cell) {
+  document.querySelectorAll('.cal-cell.sel').forEach(c => c.classList.remove('sel'));
+  if (cell) cell.classList.add('sel');
+  const evs = window._calEvents[dateStr] ?? [];
+  document.getElementById('dayEvents').innerHTML =
+    `<h3>${fmtD(dateStr)}</h3>` + (evs.length === 0
+      ? '<p class="hint">일정이 없습니다</p>'
+      : '<ul class="plain">' + evs.map(e => `<li>${e}</li>`).join('') + '</ul>');
+}
+
+/* ===================== 일보 ===================== */
+async function viewReports() {
+  $view.innerHTML = topbar('일보', 'home',
+    `<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
+             onclick="go('report-new')">✎ 작성</button>`) +
+    `<p style="font-weight:700; font-size:1.2rem">${today().replaceAll('-', ' - ')}</p>
+     <div id="reportList">불러오는 중...</div>`;
+  const reports = await api('/api/reports');
+  document.getElementById('reportList').innerHTML = reports.length === 0
+    ? '<p class="hint">작성된 일보가 없습니다. ✎ 버튼으로 작성하세요.</p>'
+    : reports.map(r => `<div>
+        <div class="report-row sketch2" onclick="go('report', ${r.id})">
+          <span>${r.author}${r.edited
+            ? `<button class="edited-btn"
+                       onclick="event.stopPropagation(); toggleReportHistory(${r.id}, 'lhist-${r.id}')"
+               >수정됨</button>` : ''}</span>
+          <span>${fmtD(r.reportDate)}</span>
+        </div>
+        <div id="lhist-${r.id}" hidden></div>
+      </div>`).join('');
+}
+async function viewReportNew() {
+  $view.innerHTML = topbar('일보 작성', 'reports') + `
+    <label class="field"><span>작성자</span>
+      <input id="rpAuthor" value="${me.displayName}" placeholder="이름"></label>
+    <label class="field"><span>날짜</span><input id="rpDate" type="date" value="${today()}"></label>
+    <label class="field"><span>내용</span>
+      <textarea id="rpContent" rows="8" placeholder="오늘의 업무 내용"></textarea></label>
+    <div style="text-align:center"><button class="act" onclick="submitReport()">등록</button></div>
+    <p id="rpMsg" class="msg" style="text-align:center"></p>`;
+}
+async function submitReport() {
+  const author = document.getElementById('rpAuthor').value.trim();
+  const content = document.getElementById('rpContent').value.trim();
+  if (!author) { showMsg('rpMsg', '작성자를 입력해 주세요.', false); return; }
+  if (!content) {
+    showMsg('rpMsg', '일보 내용이 비어 있습니다. 내용을 입력해 주세요.', false);
+    document.getElementById('rpContent').focus();
+    return;
+  }
+  try {
+    await postJson('/api/reports', {
+      author: author,
+      reportDate: document.getElementById('rpDate').value,
+      content: content
+    });
+    go('reports');
+  } catch (e) { showMsg('rpMsg', e.message, false); }
+}
+async function viewReportDetail(id) {
+  const r = await api('/api/reports/' + id);
+  window._report = r;
+  const canEdit = isOwner() || r.author === me.displayName;
+  $view.innerHTML = topbar('일보', 'reports',
+    canEdit ? `<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
+                       onclick="startEditReport()">✎ 수정</button>` : '') + `
+    <div class="sketch" style="padding:16px">
+      <p style="font-weight:700; font-size:1.25rem; border-bottom:2px solid var(--ink); padding-bottom:8px">
+        Title : ${r.author} ${fmtD(r.reportDate)}${
+          r.edited ? `<button class="edited-btn" onclick="toggleReportHistory(${r.id})">수정됨</button>` : ''}</p>
+      <div id="rhist" hidden></div>
+      <div id="rbody"><p style="white-space:pre-wrap">${r.content ?? ''}</p></div>
+    </div>
+    <h3 style="margin:20px 0 6px">댓글</h3>
+    <div id="commentList" class="hint">불러오는 중...</div>
+    <div style="display:flex; gap:8px; margin-top:12px">
+      <input id="cmInput" placeholder="댓글을 입력하세요" style="flex:1">
+      <button class="act" style="padding:8px 16px" onclick="addComment(${r.id})">등록</button>
+    </div>
+    <p id="cmMsg" class="msg"></p>`;
+  document.getElementById('cmInput').addEventListener('keydown',
+    e => { if (e.key === 'Enter') addComment(r.id); });
+  loadComments(id);
+}
+/** "수정됨" 배지 클릭 → 수정 전 내용 표시 (목록·상세 공용) */
+async function toggleReportHistory(id, boxId = 'rhist') {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  if (!box.hidden) { box.hidden = true; return; }
+  const history = await api(`/api/reports/${id}/history`);
+  box.innerHTML = history.map(h => `<div class="history-box">
+      <div class="meta">수정 전 · ${h.editedBy ?? ''} ${h.editedAt.replace('T', ' ').slice(0, 16)}
+        ${h.previousReportDate ? '· ' + fmtD(h.previousReportDate) : ''}</div>
+      <div class="old">${h.previousContent ?? ''}</div>
+    </div>`).join('');
+  box.hidden = false;
+}
+
+function startEditReport() {
+  const r = window._report;
+  const body = document.getElementById('rbody');
+  if (body.dataset.editing === '1') {
+    body.dataset.editing = '';
+    body.innerHTML = `<p style="white-space:pre-wrap">${r.content ?? ''}</p>`;
+    return;
+  }
+  body.dataset.editing = '1';
+  body.innerHTML = `
+    <label class="field"><span>날짜</span>
+      <input id="re-date" type="date" value="${r.reportDate}"></label>
+    <textarea id="re-content" rows="8">${r.content ?? ''}</textarea>
+    <div style="display:flex; gap:8px; margin-top:8px">
+      <button class="act" onclick="saveReport()">저장</button>
+      <button class="act gray" onclick="startEditReport()">취소</button>
+    </div>`;
+}
+async function saveReport() {
+  const content = document.getElementById('re-content').value.trim();
+  if (!content) {
+    showMsg('cmMsg', '일보 내용이 비어 있습니다. 내용을 입력해 주세요.', false);
+    document.getElementById('re-content').focus();
+    return;
+  }
+  try {
+    await api(`/api/reports/${window._report.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reportDate: document.getElementById('re-date').value,
+        content: content
+      })
+    });
+    viewReportDetail(window._report.id);
+  } catch (e) { showMsg('cmMsg', e.message, false); }
+}
+
+async function loadComments(reportId) {
+  const box = document.getElementById('commentList');
+  const comments = await api(`/api/reports/${reportId}/comments`);
+  box.className = '';
+  box.innerHTML = comments.length === 0
+    ? '<p class="hint">첫 댓글을 남겨보세요</p>'
+    : comments.map(c => {
+        // 본인 댓글이거나 사장님이면 수정·삭제 가능
+        const mine = isOwner() || c.author === me.displayName;
+        return `<div class="comment-row" id="cm${c.id}">
+          <div class="cm-head">
+            <span class="who">${c.author}</span>
+            <span class="when">${c.createdAt.replace('T', ' ').slice(5, 16)}</span>
+            ${c.editedAt
+              ? `<button class="edited-btn" onclick="toggleCommentHistory(${c.id})">수정됨</button>`
+              : ''}
+            ${mine ? `<span class="cm-acts">
+                <button class="cm-act" onclick="startEditComment(${c.id})">수정</button>
+                <button class="cm-act del" onclick="removeComment(${c.id})">삭제</button>
+              </span>` : ''}
+          </div>
+          <div class="cm-hist" id="cmh${c.id}" hidden></div>
+          <div class="cm-body" id="cmb${c.id}">${c.content}</div>
+        </div>`;
+      }).join('');
+  window._comments = comments;
+}
+
+/** 댓글을 인라인 입력창으로 바꿔 수정 */
+function startEditComment(id) {
+  const c = (window._comments ?? []).find(x => x.id === id);
+  if (!c) return;
+  const body = document.getElementById('cmb' + id);
+  body.innerHTML = `
+    <div class="cm-edit">
+      <input id="cme${id}" value="${c.content.replace(/"/g, '&quot;')}">
+      <button class="act" style="padding:8px 14px" onclick="saveComment(${id})">저장</button>
+      <button class="act gray" style="padding:8px 14px" onclick="loadComments(window._report.id)">취소</button>
+    </div>`;
+  document.getElementById('cme' + id).focus();
+}
+
+async function saveComment(id) {
+  const content = document.getElementById('cme' + id).value.trim();
+  if (!content) return;
+  try {
+    await api(`/api/comments/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+    loadComments(window._report.id);
+  } catch (e) { showMsg('cmMsg', e.message, false); }
+}
+
+async function removeComment(id) {
+  if (!confirm('이 댓글을 삭제할까요?')) return;
+  try {
+    await api('/api/comments/' + id, { method: 'DELETE' });
+    loadComments(window._report.id);
+  } catch (e) { showMsg('cmMsg', e.message, false); }
+}
+
+/** '수정됨'을 누르면 고치기 전 내용을 펼쳐 보여준다 */
+async function toggleCommentHistory(id) {
+  const box = document.getElementById('cmh' + id);
+  if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = '<p class="hint" style="margin:6px 0">불러오는 중...</p>';
+  try {
+    const list = await api(`/api/comments/${id}/history`);
+    box.innerHTML = list.length === 0
+      ? '<p class="hint" style="margin:6px 0">수정 이력이 없습니다.</p>'
+      : list.map(h => `<div class="history-box">
+          <div class="meta">${h.editedBy} · ${h.editedAt.replace('T', ' ').slice(5, 16)} 수정 전</div>
+          <div class="old">${h.previousContent}</div>
+        </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<p class="msg error" style="margin:6px 0">${e.message}</p>`;
+  }
+}
+async function addComment(reportId) {
+  const input = document.getElementById('cmInput');
+  if (!input.value.trim()) return;
+  try {
+    await postJson(`/api/reports/${reportId}/comments`, { content: input.value.trim() });
+    input.value = '';
+    loadComments(reportId);
+  } catch (e) { showMsg('cmMsg', e.message, false); }
+}
+
+/* ===================== 예약 ===================== */
+const TIME_SLOTS = ['17:00','18:00','19:00','20:00','21:00','22:00'];
+let draft = { date: null, timeSlot: null, people: null, tableIds: [], customerName: '', courseName: null };
+
+/** 예약 메뉴 — 코스 예약 / 코스 없이 예약 / 예약 확인으로 분기 */
+async function viewReserve() {
+  $view.innerHTML = topbar('예약', 'home') + `
+    <div class="menu-btns">
+      <button class="act" onclick="go('course-list')">코스 예약</button>
+      <button class="act" onclick="draft.courseName=null; go('reserve-new')">코스 없이 예약</button>
+      <button class="act gray" onclick="go('reserve-list')">예약 확인</button>
+    </div>`;
+}
+
+/**
+ * 코스를 "음료·술 무제한 / 무제한 아님" 두 묶음으로 나눠 그린다.
+ * 초록 줄은 묶음 제목이라 누를 수 없고, 실제 코스(파란 줄)만 선택 대상이다.
+ * @param renderItem 코스 하나를 <li>로 그리는 함수 (화면마다 내용이 다름)
+ */
+function courseGroupsHtml(courses, renderItem) {
+  const groups = [
+    { accent: 'refill', title: '음료, 술 무제한 코스', items: courses.filter(c => c.unlimitedRefill) },
+    { accent: 'normal', title: '일반 코스',           items: courses.filter(c => !c.unlimitedRefill) }
+  ];
+  return `<ul class="plain course-list">` + groups.map(g => `
+      <li class="course-group-head cg-${g.accent}">${g.title}</li>
+      ${g.items.length === 0
+        ? `<li class="course-group-empty">등록된 코스가 없습니다</li>`
+        : g.items.map(c => renderItem(c, g)).join('')}`).join('') + `</ul>`;
+}
+
+/** 코스 예약 — 코스를 먼저 고르면 예약 받기 화면으로 이동 */
+async function viewCourseList() {
+  $view.innerHTML = topbar('코스 예약', 'reserve')
+    + `<p class="page-sub">예약하실 코스를 선택해주세요</p>`
+    + `<div id="courseList">불러오는 중...</div>`;
+  const box = document.getElementById('courseList');
+  try {
+    const s = await api('/api/store');
+    box.innerHTML = s.courses.length === 0
+      ? '<p class="hint">등록된 코스가 없습니다. 가게 설정에서 코스를 추가해 주세요.</p>'
+      : courseGroupsHtml(s.courses, (c, g) => `
+          <li class="course-row course-item cg-${g.accent}"
+              onclick="draft.courseName='${esc(c.name)}'; go('reserve-new')">
+            <span class="c-name">${c.name}</span>
+            <span class="c-right"><span class="c-radio" aria-hidden="true"></span></span>
+          </li>`);
+  } catch (e) {
+    box.innerHTML = `<p class="msg error">${e.message}</p>`;
+  }
+}
+function esc(s) { return s.replace(/'/g, "\\'"); }
+function copyCode(ev, code) {
+  if (!code) return;
+  try { if (navigator.clipboard) navigator.clipboard.writeText(code); } catch (e) {}
+  const b = ev.currentTarget, o = b.innerHTML;
+  b.innerHTML = '복사됨'; setTimeout(() => { b.innerHTML = o; }, 1200);
+}
+
+/** 예약 확인 — 날짜별로 묶어서 보여주고, 누르면 상세로 */
+async function viewReserveList() {
+  $view.innerHTML = topbar('예약 확인', 'reserve') + `<div id="rlist">불러오는 중...</div>`;
+  try {
+    const list = await api('/api/reservations/upcoming');
+    const box = document.getElementById('rlist');
+    if (list.length === 0) {
+      box.innerHTML = '<p class="hint">예정된 예약이 없습니다.</p>';
+      return;
+    }
+    let html = '', lastDate = null;
+    for (const r of list) {
+      if (r.reserveDate !== lastDate) {
+        lastDate = r.reserveDate;
+        html += `<div class="date-head">${fmtD(r.reserveDate)}</div>`;
+      }
+      html += `<div class="resv-row" onclick="go('reservation', ${r.id})">
+          <span>${r.customerName || '(이름 없음)'}${r.courseName ? ' · ' + r.courseName : ''}</span>
+          <span>${r.people}명
+            ${r.status === 'ACTIVE'
+              ? '<span class="badge-seated">사용중</span>'
+              : '<span class="badge-free">공석</span>'}</span>
+        </div>`;
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    document.getElementById('rlist').innerHTML =
+      `<p class="msg error">${e.message}</p>`;
+  }
+}
+
+/** 예약 상세 — 예약자·날짜·시간·인원·테이블 + 공석 처리 / 예약 취소 */
+async function viewReservationDetail(id) {
+  let r;
+  try { r = await api('/api/reservations/' + id); }
+  catch (e) { $view.innerHTML = topbar('예약 확인', 'reserve-list')
+      + `<p class="msg error">${e.message}</p>`; return; }
+
+  const [, mm, dd] = r.reserveDate.split('-');
+  $view.innerHTML = topbar('예약 확인', 'reserve-list') + `
+    <div class="sketch resv-detail">
+      <div class="who">${r.customerName || '(이름 없음)'}</div>
+      <div>${r.courseName || '코스 없이 예약'}</div>
+      <div>${Number(mm)}월 ${Number(dd)}일</div>
+      <div>${r.timeSlot}</div>
+      <div>${r.people}명</div>
+      <div>테이블 ${r.tableNumbers.join(', ')}번
+        <span class="hint">(총 ${r.totalCapacity}석)</span></div>
+      <div>${r.status === 'ACTIVE'
+        ? '<span class="badge-seated">사용중</span>'
+        : '<span class="badge-free">공석</span>'}</div>
+      <div style="text-align:right; margin-top:14px">
+        ${r.status === 'ACTIVE'
+          ? `<button class="ack-btn" onclick="releaseFromDetail(${r.id})">공석 처리</button>` : ''}
+        <button class="act danger" style="padding:6px 16px"
+                onclick="cancelFromDetail(${r.id})">예약취소</button>
+      </div>
+    </div>
+    <p id="rdMsg" class="msg" style="text-align:center"></p>`;
+}
+async function releaseFromDetail(id) {
+  try {
+    await postJson(`/api/reservations/${id}/release`, {});
+    viewReservationDetail(id);
+  } catch (e) { showMsg('rdMsg', e.message, false); }
+}
+async function cancelFromDetail(id) {
+  if (!confirm('이 예약을 취소할까요?')) return;
+  try {
+    await api('/api/reservations/' + id, { method: 'DELETE' });
+    go('reserve-list');
+  } catch (e) { showMsg('rdMsg', e.message, false); }
+}
+
+/** 예약 받기 — 날짜·시간·인원·테이블을 골라 새 예약을 등록 (코스 예약이면 draft.courseName이 채워져 있음) */
+async function viewReserveNew() {
+  draft.date ??= today();
+  $view.innerHTML = topbar(draft.courseName ? '코스 예약' : '코스 없이 예약', 'reserve') + `
+    ${draft.courseName ? `<div class="sketch2" style="padding:10px 14px; margin-bottom:14px; text-align:center; font-weight:700">${draft.courseName}</div>` : ''}
+    <label class="field"><span>날짜</span>
+      <input id="rvDate" type="date" value="${draft.date}" onchange="draft.date=this.value; draft.tableIds=[]; render()"></label>
+    <label class="field"><span>시간</span>
+      <select id="rvTime" onchange="draft.timeSlot=this.value; draft.tableIds=[]">
+        <option value="">선택</option>
+        ${TIME_SLOTS.map(t => `<option ${draft.timeSlot === t ? 'selected' : ''}>${t}</option>`).join('')}
+      </select></label>
+    <label class="field"><span>인원</span>
+      <select id="rvPeople" onchange="draft.people=Number(this.value)">
+        <option value="">선택</option>
+        ${[1,2,3,4,5,6,7,8].map(n => `<option ${draft.people === n ? 'selected' : ''} value="${n}">${n}명</option>`).join('')}
+      </select></label>
+    <label class="field"><span>예약자명</span>
+      <input id="rvName" value="${draft.customerName}" placeholder="예약자 이름"
+             oninput="draft.customerName=this.value"></label>
+    <button class="act gray" onclick="openTableMap()">테이블 선택
+      ${draft.tableIds.length ? ` — ${draft.tableIds.join(', ')}번` : ''}</button>
+    <p class="hint" style="margin-top:6px">인원이 많으면 테이블을 여러 개 선택해 붙여 앉힐 수 있습니다.
+       배정된 테이블은 <strong>공석 처리하기 전까지</strong> 계속 사용중으로 표시됩니다.</p>
+    <div style="text-align:center; margin-top:20px">
+      <button class="act" onclick="submitReserve()">확정</button>
+    </div>
+    <p id="rvMsg" class="msg" style="text-align:center"></p>
+    <h3 style="margin-top:26px">이 날짜의 예약</h3>
+    <ul class="plain" id="rvList">불러오는 중...</ul>`;
+  loadDayReservations();
+}
+async function loadDayReservations() {
+  const list = await api('/api/reservations?date=' + draft.date);
+  document.getElementById('rvList').innerHTML = list.length === 0
+    ? '<li class="hint">예약이 없습니다</li>'
+    : list.map(r => `<li>
+        <div>${r.timeSlot} · 테이블 ${r.tableNumbers.join(', ')}번 · ${r.people}명
+          ${r.customerName ? '· ' + r.customerName : ''}
+          ${r.courseName ? '· ' + r.courseName : ''}
+          ${r.status === 'ACTIVE'
+            ? '<span class="badge-seated">사용중</span>'
+            : '<span class="badge-free">공석</span>'}</div>
+        <div style="margin-top:4px">
+          ${r.status === 'ACTIVE'
+            ? `<button class="ack-btn" onclick="releaseReserve(${r.id})">공석 처리</button>` : ''}
+          <button class="del" style="border:none;background:none;color:var(--red);cursor:pointer;font-family:inherit"
+                  onclick="cancelReserve(${r.id})">예약 취소</button>
+        </div></li>`).join('');
+}
+
+/** 손님이 나간 뒤 — 테이블을 비워 다시 배정 가능하게 만든다 */
+async function releaseReserve(id) {
+  try {
+    await postJson(`/api/reservations/${id}/release`, {});
+    showMsg('rvMsg', '공석 처리했습니다. 이제 이 테이블을 다시 배정할 수 있어요.', true);
+    loadDayReservations();
+  } catch (e) { showMsg('rvMsg', e.message, false); }
+}
+async function cancelReserve(id) {
+  await api('/api/reservations/' + id, { method: 'DELETE' });
+  loadDayReservations();
+}
+function openTableMap() {
+  if (!draft.timeSlot) { showMsg('rvMsg', '시간을 먼저 선택하세요.', false); return; }
+  go('tables');
+}
+
+async function viewTables() {
+  if (!draft.timeSlot) { go('reserve-new'); return; }
+  $view.innerHTML = topbar(`테이블 선택 (${fmtD(draft.date)} ${draft.timeSlot})`, 'reserve-new')
+    + `<div id="tableMapWrap"></div>`;
+  window._tables = await api(`/api/tables?date=${draft.date}&timeSlot=${draft.timeSlot}`);
+  renderTableMap();
+}
+
+/** 여러 테이블을 눌러 선택/해제 — 정원 합계가 인원 이상이면 확정 가능 */
+function renderTableMap() {
+  const tables = window._tables ?? [];
+  const picked = tables.filter(t => draft.tableIds.includes(t.id));
+  const seats = picked.reduce((s, t) => s + t.capacity, 0);
+  const need = draft.people ?? 0;
+  const enough = picked.length > 0 && seats >= need;
+
+  document.getElementById('tableMapWrap').innerHTML = `
+    <p class="hint" style="text-align:center">
+      빨간 테이블은 사용중(공석 처리 전) · 여러 개를 눌러 붙여 앉힐 수 있습니다</p>
+    <div class="table-grid">` + tables.map(t => `
+      <button class="tbl-cell ${t.reserved ? 'reserved' : ''} ${draft.tableIds.includes(t.id) ? 'sel' : ''}"
+              ${t.reserved ? 'disabled' : `onclick="toggleTable(${t.id})"`}>
+        <span class="tno">${t.number}</span><small>${t.capacity}인</small>
+      </button>`).join('') + `</div>
+    <div class="sketch2" style="padding:12px; margin-top:14px; text-align:center">
+      <div style="font-weight:700; font-size:1.1rem">
+        선택 ${picked.length}개 · 총 ${seats}석 / 인원 ${need}명
+        <span style="color:${enough ? 'var(--green)' : 'var(--red)'}">
+          ${picked.length === 0 ? '' : (enough ? '✓' : '자리 부족')}</span>
+      </div>
+      <div class="hint">${picked.length
+        ? '테이블 ' + picked.map(t => t.number).sort((a,b)=>a-b).join(', ') + '번'
+        : '테이블을 선택하세요'}</div>
+      <button class="act" style="margin-top:10px" onclick="go('reserve-new')">선택 완료</button>
+    </div>`;
+}
+function toggleTable(id) {
+  const i = draft.tableIds.indexOf(id);
+  if (i >= 0) draft.tableIds.splice(i, 1); else draft.tableIds.push(id);
+  renderTableMap();
+}
+
+async function submitReserve() {
+  if (!draft.timeSlot || !draft.people || draft.tableIds.length === 0) {
+    showMsg('rvMsg', '시간·인원·테이블을 모두 선택하세요.', false); return;
+  }
+  try {
+    await postJson('/api/reservations', {
+      reserveDate: draft.date, timeSlot: draft.timeSlot, people: draft.people,
+      tableIds: draft.tableIds, customerName: draft.customerName, courseName: draft.courseName
+    });
+    showMsg('rvMsg', '예약이 확정되었습니다.', true);
+    draft.tableIds = []; draft.timeSlot = null; draft.people = null;
+    loadDayReservations();
+  } catch (e) { showMsg('rvMsg', e.message, false); }
+}
+
+/* ===================== 가게 설정 (사장님) ===================== */
+async function viewSettings() {
+  $view.innerHTML = topbar('가게 설정', 'home') + `<div id="settingsBody">불러오는 중...</div>`;
+  loadSettings();
+}
+async function loadSettings() {
+  const s = await api('/api/store');
+  const t = v => v ? v.slice(0, 5) : '';
+  document.getElementById('settingsBody').innerHTML = `
+    <div class="sketch" style="padding:16px; margin-bottom:14px">
+      <label class="field"><span>가게 이름</span><input id="stName" value="${s.name}"></label>
+      <div style="display:flex; gap:8px">
+        <label class="field" style="flex:1"><span>오픈</span>
+          <input id="stOpen" type="time" value="${t(s.open)}"></label>
+        <label class="field" style="flex:1"><span>마감</span>
+          <input id="stClose" type="time" value="${t(s.close)}"></label>
+      </div>
+        <button class="act" style="width:100%" onclick="saveStore()">저장</button>
+    </div>
+
+    <div class="code-card">
+      <div class="code-card-label">가게 코드 · 직원 가입/로그인용</div>
+      <div class="code-card-value">
+        <span class="code-text">${s.code ?? '-'}</span>
+        <button class="code-copy" onclick="copyCode(event, '${s.code ?? ''}')">📋 복사</button>
+      </div>
+      <button class="code-regen" onclick="regenCode()">코드 재발급</button>
+      <p class="code-hint">재발급하면 이전 코드는 즉시 무효화됩니다.</p>
+    </div>
+
+    <div class="sketch" style="padding:16px">
+      <h3 style="margin:0 0 8px">테이블 구성</h3>
+      <div id="stTables">${s.tables.map(tb => `
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    padding:6px 0; border-bottom:2px solid #d9d2bc">
+          <span><b>${tb.number}번</b> · ${tb.capacity}인</span>
+          <button class="del" onclick="delTable(${tb.id})">삭제</button>
+        </div>`).join('')}</div>
+      <div style="display:flex; gap:8px; margin-top:10px; align-items:flex-end">
+        <label class="field" style="flex:1; margin:0"><span>번호</span>
+          <input id="tbNum" type="number" min="1"></label>
+        <label class="field" style="flex:1; margin:0"><span>정원</span>
+          <input id="tbCap" type="number" min="1" value="2"></label>
+        <button class="act" style="padding:8px 14px" onclick="addTable()">추가</button>
+      </div>
+    </div>
+
+    <div class="sketch" style="padding:16px; margin-top:14px">
+      <h3 style="margin:0 0 8px">코스 메뉴</h3>
+      <p class="hint" style="margin-top:0">코스는 "음료·술 무제한" 여부로 묶여 표시됩니다.
+        시간제한(분)은 선택 사항이며, 값을 넣으면 그 시간이 지난 뒤 테이블이 자동으로 공석 처리됩니다.</p>
+      <div id="stCourses">${courseGroupsHtml(s.courses, (c, g) => `
+        <li class="course-row course-item static cg-${g.accent}">
+          <span class="c-name">${c.name}</span>
+          <span class="c-right">
+            ${c.durationMinutes ? `<span class="badge-timed">${c.durationMinutes}분</span>` : ''}
+            <button class="del" onclick="delCourse(${c.id})">삭제</button>
+          </span>
+        </li>`)}</div>
+      <label class="field" style="margin-top:10px"><span>코스 이름</span>
+        <input id="crsName" placeholder="예: 모둠사시미 코스"></label>
+      <div style="display:flex; gap:8px; align-items:flex-end">
+        <label class="field" style="flex:2; margin:0"><span>종류</span>
+          <select id="crsRefill">
+            <option value="false">일반 코스</option>
+            <option value="true">무제한 리필</option>
+          </select></label>
+        <label class="field" style="flex:1; margin:0"><span>시간제한(분)</span>
+          <input id="crsDuration" type="number" min="1" placeholder="없음"></label>
+        <button class="act" style="padding:11px 16px" onclick="addCourse()">추가</button>
+      </div>
+    </div>
+    <p id="stMsg2" class="msg" style="text-align:center"></p>`;
+}
+async function saveStore() {
+  try {
+    await api('/api/store', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('stName').value,
+        open: document.getElementById('stOpen').value,
+        close: document.getElementById('stClose').value
+      })});
+    // 헤더 타이틀 갱신을 위해 세션 정보 다시 로드
+    try { me = await api('/api/auth/me'); } catch {}
+    showMsg('stMsg2', '저장되었습니다.', true);
+  } catch (e) { showMsg('stMsg2', e.message, false); }
+}
+async function regenCode() {
+  if (!confirm('코드를 재발급할까요?\n이전 코드로는 더 이상 가입·로그인할 수 없습니다.')) return;
+  try { await postJson('/api/store/regenerate-code', {}); loadSettings(); }
+  catch (e) { showMsg('stMsg2', e.message, false); }
+}
+async function addTable() {
+  try {
+    await postJson('/api/store/tables', {
+      number: Number(document.getElementById('tbNum').value),
+      capacity: Number(document.getElementById('tbCap').value)
+    });
+    loadSettings();
+  } catch (e) { showMsg('stMsg2', e.message, false); }
+}
+async function delTable(id) {
+  try { await api('/api/store/tables/' + id, { method: 'DELETE' }); loadSettings(); }
+  catch (e) { showMsg('stMsg2', e.message, false); }
+}
+async function addCourse() {
+  try {
+    const name = document.getElementById('crsName').value.trim();
+    if (!name) return;
+    const durationMinutes = Number(document.getElementById('crsDuration').value) || null;
+    const unlimitedRefill = document.getElementById('crsRefill').value === 'true';
+    await postJson('/api/store/courses', { name, durationMinutes, unlimitedRefill });
+    loadSettings();
+  } catch (e) { showMsg('stMsg2', e.message, false); }
+}
+async function delCourse(id) {
+  try { await api('/api/store/courses/' + id, { method: 'DELETE' }); loadSettings(); }
+  catch (e) { showMsg('stMsg2', e.message, false); }
+}
+</script>
+</body>
+</html>

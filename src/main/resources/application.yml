@@ -1,0 +1,31 @@
+spring:
+  config:
+    # secret.yml(API 키 파일)이 있으면 불러오고, 없어도 에러 없이 mock 모드로 실행됨
+    import: optional:classpath:secret.yml
+  datasource:
+    url: jdbc:h2:mem:izacare;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+vision:
+  # gemini | mock  — 실제 키는 secret.yml에서 설정 (이 파일에는 키를 적지 마세요!)
+  provider: ${VISION_PROVIDER:mock}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: gemini-3.7-flash
+
+server:
+  port: 8080
