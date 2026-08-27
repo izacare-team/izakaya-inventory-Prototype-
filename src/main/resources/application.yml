@@ -13,7 +13,9 @@ spring:
     open-in-view: false
   h2:
     console:
-      enabled: true
+      # 인증 없이 DB 전체에 접근할 수 있는 콘솔 — 기본 꺼짐.
+      # 로컬에서 쓰려면 H2_CONSOLE=true 환경변수로 켠다. 배포 환경에서는 절대 켜지 말 것.
+      enabled: ${H2_CONSOLE:false}
       path: /h2-console
   servlet:
     multipart:
@@ -29,3 +31,8 @@ vision:
 
 server:
   port: 8080
+  servlet:
+    session:
+      cookie:
+        http-only: true    # JS에서 세션 쿠키 접근 차단
+        same-site: strict  # 크로스 사이트 요청에 쿠키 미전송 (CSRF 방어)

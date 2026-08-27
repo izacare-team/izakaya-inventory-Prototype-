@@ -54,6 +54,35 @@
 </div>
 
 <script>
+/* ===================== XSS 방지 =====================
+   html`` 태그드 템플릿 — 삽입되는 ${값}을 자동으로 HTML 이스케이프한다.
+   중첩된 html`` 결과, 그 배열, raw()로 감싼 값만 그대로 삽입된다.
+
+   ⚠ 화면을 새로 만들 때도 반드시 html`` 을 쓸 것.
+     그냥 `` 로 만들어 innerHTML에 넣으면 XSS가 다시 열린다.
+   ⚠ 이스케이프는 HTML 문맥만 막아준다. onclick="fn('${값}')" 처럼
+     속성 안의 JS 문자열에는 사용자 입력을 넣지 말 것 (&#39;로 바뀌어도
+     브라우저가 다시 '로 되돌리므로 탈출이 가능하다). data-* 속성을 쓸 것. */
+class SafeHtml {
+  constructor(s) { this.s = s; }
+  toString() { return this.s; }
+}
+const raw = v => new SafeHtml(String(v));
+const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+function escVal(v) {
+  if (v instanceof SafeHtml) return v.s;
+  if (Array.isArray(v)) return v.map(escVal).join('');
+  if (v === null || v === undefined || v === false) return '';
+  return String(v).replace(/[&<>"']/g, c => ESC_MAP[c]);
+}
+
+function html(strings, ...vals) {
+  let out = strings[0];
+  for (let i = 0; i < vals.length; i++) out += escVal(vals[i]) + strings[i + 1];
+  return new SafeHtml(out);
+}
+
 /* ===================== 공통 유틸 ===================== */
 const $view = document.getElementById('view');
 let me = null;                  // 로그인 사용자 {id, username, displayName, role}
@@ -96,15 +125,15 @@ function toggleTheme() {
 
 /** 헤더에 넣을 테마 버튼 — 라이트일 땐 달, 다크일 땐 해가 보인다 */
 function themeButtonHtml() {
-  return `<button class="icon-btn" title="라이트/다크 전환" onclick="toggleTheme()">
+  return html`<button class="icon-btn" title="라이트/다크 전환" onclick="toggleTheme()">
     <svg class="mi mi-light" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-5.4-5.4c0-1.81.9-3.4 2.26-4.4A9.4 9.4 0 0 0 12 3z"/></svg>
     <svg class="mi mi-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0-4.5a1 1 0 0 1 1 1V5a1 1 0 0 1-2 0V3.5a1 1 0 0 1 1-1zm0 16a1 1 0 0 1 1 1v1.5a1 1 0 0 1-2 0V19.5a1 1 0 0 1 1-1zM3.5 11H5a1 1 0 0 1 0 2H3.5a1 1 0 0 1 0-2zm15.5 0h1.5a1 1 0 0 1 0 2H19a1 1 0 0 1 0-2zM5.64 4.22 6.7 5.28a1 1 0 0 1-1.42 1.42L4.22 5.64a1 1 0 0 1 1.42-1.42zm12.72 12.72 1.06 1.06a1 1 0 0 1-1.42 1.42l-1.06-1.06a1 1 0 0 1 1.42-1.42zM18.36 4.22a1 1 0 0 1 1.42 1.42L18.72 6.7a1 1 0 0 1-1.42-1.42zM5.28 17.3a1 1 0 0 1 1.42 1.42l-1.06 1.06a1 1 0 0 1-1.42-1.42z"/></svg>
   </button>`;
 }
 
 function topbar(title, backTo, extraHtml = '') {
-  return `<div class="topbar">
-    ${backTo !== undefined ? `<button class="back" onclick="go('${backTo}')">←</button>` : ''}
+  return html`<div class="topbar">
+    ${backTo !== undefined ? html`<button class="back" onclick="go('${backTo}')">←</button>` : ''}
     <h1>${title}</h1><div class="spacer"></div>${extraHtml}
   </div>`;
 }
@@ -144,7 +173,7 @@ function render() {
 /* ===================== 로그인 / 회원가입 ===================== */
 function viewLogin() {
   document.getElementById('bottomNav').style.display = 'none';
-  $view.innerHTML = `
+  $view.innerHTML = html`
     <div style="display:flex; justify-content:flex-end">${themeButtonHtml()}</div>
     <div style="margin-top:44px; text-align:center">
       <h1 style="font-size:2rem">🍶 이자카야<br>매장관리</h1>
@@ -194,7 +223,7 @@ function stripHangul(input) {
 
 function viewSignup() {
   document.getElementById('bottomNav').style.display = 'none';
-  $view.innerHTML = topbar('회원가입', 'login') + `
+  $view.innerHTML = topbar('회원가입', 'login') + html`
     <div class="sketch2" style="padding:20px">
       <label class="field"><span>구분</span>
         <select id="sgRole" onchange="toggleSignupRole()">
@@ -246,7 +275,7 @@ async function doSignup() {
     });
     if (isOwner && r.storeCode) {
       // 사장님: 발급된 가게 코드를 크게 안내
-      $view.innerHTML = topbar('가게 개설 완료', 'login') + `
+      $view.innerHTML = topbar('가게 개설 완료', 'login') + html`
         <div class="sketch" style="padding:24px; text-align:center; margin-top:20px">
           <p style="font-weight:700; font-size:1.2rem">${r.storeName}</p>
           <p class="hint">${r.message}</p>
@@ -269,7 +298,7 @@ async function doLogout() {
 
 /* ===================== 직원 관리 (사장님 전용) ===================== */
 async function viewStaff() {
-  $view.innerHTML = topbar('직원 관리', 'home') + `
+  $view.innerHTML = topbar('직원 관리', 'home') + html`
     <p class="hint">퇴직 처리하면 로그인과 모든 기능 접근 권한이 즉시 사라집니다.</p>
     <div id="staffList">불러오는 중...</div>
     <p id="stMsg" class="msg"></p>`;
@@ -283,20 +312,21 @@ async function loadStaff() {
   };
   try {
     const members = await api('/api/admin/members');
-    document.getElementById('staffList').innerHTML = members.map(m => `
+    document.getElementById('staffList').innerHTML = members.map(m => html`
       <div class="audit-row sketch2">
         <span class="nm">${m.displayName}<br>
           <span class="hint">${ROLE[m.role]} · ${m.username}</span></span>
         <span style="font-weight:700; white-space:nowrap">${STATUS[m.status] ?? m.status}</span>
-        ${m.status === 'PENDING' ? `
+        ${m.status === 'PENDING' ? html`
           <button class="act" style="padding:5px 12px; font-size:0.9rem"
                   onclick="staffAction(${m.id}, 'approve')">승인</button>
           <button class="act danger" style="padding:5px 12px; font-size:0.9rem"
                   onclick="staffAction(${m.id}, 'reject')">거절</button>` : ''}
-        ${m.status === 'ACTIVE' && m.role !== 'OWNER' ? `
+        ${m.status === 'ACTIVE' && m.role !== 'OWNER' ? html`
           <button class="act danger" style="padding:5px 12px; font-size:0.9rem"
-                  onclick="confirmResign(${m.id}, '${m.displayName}')">퇴직 처리</button>` : ''}
-        ${(m.status === 'RESIGNED' || m.status === 'REJECTED') ? `
+                  data-id="${m.id}" data-name="${m.displayName}"
+                  onclick="confirmResign(this)">퇴직 처리</button>` : ''}
+        ${(m.status === 'RESIGNED' || m.status === 'REJECTED') ? html`
           <button class="act" style="padding:5px 12px; font-size:0.9rem"
                   onclick="staffAction(${m.id}, 'reinstate')">복직</button>` : ''}
       </div>`).join('');
@@ -304,7 +334,11 @@ async function loadStaff() {
 }
 
 /** 퇴직은 권한을 회수하는 되돌리기 어려운 작업이라 한 번 더 확인 */
-function confirmResign(id, name) {
+/* 이름을 onclick 문자열에 직접 넣지 않고 data-* 로 넘긴다.
+   속성값은 html`` 이 이스케이프하지만, onclick 안의 JS 문자열은
+   브라우저가 속성을 먼저 디코드하므로 이스케이프로 막히지 않는다. */
+function confirmResign(btn) {
+  const { id, name } = btn.dataset;
   if (!confirm(`${name}님을 퇴직 처리할까요?\n로그인과 모든 기능 접근 권한이 즉시 사라집니다.\n(복직 버튼으로 되돌릴 수 있습니다)`)) return;
   staffAction(id, 'resign');
 }
@@ -366,7 +400,7 @@ async function toggleAlertPanel() {
     alerts = await api('/api/alerts');
     window._alerts = alerts;
   } catch (e) {
-    panel.innerHTML = `<p class="msg error" style="margin:6px">
+    panel.innerHTML = html`<p class="msg error" style="margin:6px">
       알림을 불러오지 못했습니다 — ${e.message}</p>`;
     return;
   }
@@ -377,12 +411,12 @@ async function toggleAlertPanel() {
         const m = ALERT_META[a.type] ?? { icon: '•', cls: '', label: '' };
         // 이동할 곳이 있으면 버튼으로 — 누르면 해당 화면으로 바로 간다
         const go = a.route
-          ? `onclick="openAlert('${a.route}', ${a.arg === null ? 'null' : `'${a.arg}'`})"`
+          ? html`onclick="openAlert('${a.route}', ${a.arg === null ? 'null' : `'${a.arg}'`})"`
           : '';
-        return `<${a.route ? 'button' : 'div'} class="alert-line ${m.cls}${a.route ? ' linked' : ''}" ${go}>
+        return html`<${a.route ? 'button' : 'div'} class="alert-line ${m.cls}${a.route ? ' linked' : ''}" ${go}>
           <span class="ico">${m.icon}</span><span class="txt">${a.message}</span>
-          ${a.createdAt ? `<span class="when">${a.createdAt.replace('T', ' ').slice(5, 16)}</span>` : ''}
-          ${a.route ? '<span class="chev">›</span>' : ''}
+          ${a.createdAt ? html`<span class="when">${a.createdAt.replace('T', ' ').slice(5, 16)}</span>` : ''}
+          ${a.route ? html`<span class="chev">›</span>` : ''}
         </${a.route ? 'button' : 'div'}>`;
       }).join('');
 
@@ -401,7 +435,7 @@ async function toggleAlertPanel() {
 
 /* ===================== 홈 ===================== */
 async function viewHome() {
-  $view.innerHTML = topbar(`${me.storeName} 매장관리`, undefined, `
+  $view.innerHTML = topbar(`${me.storeName} 매장관리`, undefined, html`
       <span class="hint" style="font-weight:700; white-space:nowrap">${me.displayName}</span>
       <button class="icon-btn bell" title="알림" onclick="toggleAlertPanel()">
         <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
@@ -409,15 +443,15 @@ async function viewHome() {
       ${themeButtonHtml()}
       <button class="icon-btn" title="로그아웃" onclick="doLogout()">
         <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
-      </button>`) + `
+      </button>`) + html`
     <div id="alertPanel" class="sketch2 alert-panel" hidden></div>
-    ${isOwner() ? '<div id="dashCard"></div>' : ''}
-    ${isOwner() ? '<div id="dashDetail" class="sketch2 dash-detail" hidden></div>' : ''}
+    ${isOwner() ? html`<div id="dashCard"></div>` : ''}
+    ${isOwner() ? html`<div id="dashDetail" class="sketch2 dash-detail" hidden></div>` : ''}
     <div class="home-grid">
       <div class="notice-box sketch">
         <h2>Notice</h2>
         <div id="noticeList" class="hint">불러오는 중...</div>
-        ${isOwner() ? `
+        ${isOwner() ? html`
         <form id="noticeForm" style="margin-top:14px">
           <textarea name="title" class="notice-input" rows="3"
                     placeholder="공지 내용을 입력하세요" required></textarea>
@@ -432,8 +466,8 @@ async function viewHome() {
         <button class="side-btn b-blue"   onclick="go('calendar')">일정</button>
         <button class="side-btn b-red"    onclick="go('reports')">일보</button>
         <button class="side-btn b-purple" onclick="go('reserve')">예약</button>
-        ${isOwner() ? `<button class="side-btn b-green" onclick="go('staff')">직원</button>` : ''}
-        ${isOwner() ? `<button class="side-btn b-gray" onclick="go('settings')">설정</button>` : ''}
+        ${isOwner() ? html`<button class="side-btn b-green" onclick="go('staff')">직원</button>` : ''}
+        ${isOwner() ? html`<button class="side-btn b-gray" onclick="go('settings')">설정</button>` : ''}
       </div>
     </div>
     <p id="homeMsg" class="msg"></p>`;
@@ -460,7 +494,7 @@ async function loadDashboard() {
     const card = document.getElementById('dashCard');
     if (!card) return;
     card.className = 'sketch2 dash-card';
-    card.innerHTML = DASH_STATS.map(s => `
+    card.innerHTML = DASH_STATS.map(s => html`
       <button class="dash-stat ${s.cls}" data-k="${s.key}" onclick="toggleDashDetail('${s.key}')">
         <span class="num">${d[s.field]}</span>
         <span class="label">${s.label}</span>
@@ -492,23 +526,23 @@ async function toggleDashDetail(key) {
   box.hidden = false;
 
   const meta = DASH_STATS.find(s => s.key === key);
-  box.innerHTML = `<div class="dash-detail-head">${meta.label}</div>
+  box.innerHTML = html`<div class="dash-detail-head">${meta.label}</div>
     <p class="hint" style="margin:8px 2px">불러오는 중...</p>`;
 
   try {
     const detail = await api('/api/dashboard/details');
     const rows = detail[key] ?? [];
-    box.innerHTML = `<div class="dash-detail-head">${meta.label}
+    box.innerHTML = html`<div class="dash-detail-head">${meta.label}
         <span class="count">${rows.length}</span></div>`
       + (rows.length === 0
-          ? `<p class="hint" style="margin:8px 2px">${meta.empty}</p>`
-          : `<ul class="dash-detail-list">${rows.map(r => r.route
-              ? `<li><button class="detail-link"
+          ? html`<p class="hint" style="margin:8px 2px">${meta.empty}</p>`
+          : html`<ul class="dash-detail-list">${rows.map(r => r.route
+              ? html`<li><button class="detail-link"
                      onclick="openAlert('${r.route}', ${r.arg === null ? 'null' : `'${r.arg}'`})">
                      <span class="txt">${r.text}</span><span class="chev">›</span></button></li>`
-              : `<li>${r.text}</li>`).join('')}</ul>`);
+              : html`<li>${r.text}</li>`)}</ul>`);
   } catch (e) {
-    box.innerHTML = `<p class="msg error" style="margin:6px 2px">${e.message}</p>`;
+    box.innerHTML = html`<p class="msg error" style="margin:6px 2px">${e.message}</p>`;
   }
 }
 
@@ -523,11 +557,11 @@ async function loadNotices() {
     const notices = await api('/api/notices');
     box.className = '';
     box.innerHTML = notices.length === 0 ? '<p class="hint">등록된 공지가 없습니다</p>' :
-      notices.map(n => `<div class="notice-item" style="flex-direction:column; align-items:stretch">
+      notices.map(n => html`<div class="notice-item" style="flex-direction:column; align-items:stretch">
         <div style="display:flex; justify-content:space-between; gap:8px">
           <span style="white-space:pre-wrap">${n.title} ${fmtD(n.eventDate)}${
-            n.edited ? `<button class="edited-btn" onclick="toggleNoticeHistory(${n.id})">수정됨</button>` : ''}</span>
-          ${isOwner() ? `<span style="white-space:nowrap">
+            n.edited ? html`<button class="edited-btn" onclick="toggleNoticeHistory(${n.id})">수정됨</button>` : ''}</span>
+          ${isOwner() ? html`<span style="white-space:nowrap">
               <button class="del" style="color:var(--blue)" onclick="startEditNotice(${n.id})">수정</button>
               <button class="del" onclick="delNotice(${n.id})">x</button></span>` : ''}
         </div>
@@ -535,11 +569,11 @@ async function loadNotices() {
         <div id="nedit-${n.id}" hidden></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
           ${n.ackedByMe
-            ? `<span class="ack-done">✓ 확인했습니다</span>`
-            : `<button class="ack-btn" onclick="ackNotice(${n.id})">확인했습니다</button>`}
+            ? html`<span class="ack-done">✓ 확인했습니다</span>`
+            : html`<button class="ack-btn" onclick="ackNotice(${n.id})">확인했습니다</button>`}
           <span class="hint" style="margin-left:10px; text-align:right">
             확인 ${n.ackCount}명${isOwner() && n.ackedNames.length
-              ? `<br>(${n.ackedNames.join(', ')})` : ''}</span>
+              ? html`<br>(${n.ackedNames.join(', ')})` : ''}</span>
         </div>
       </div>`).join('');
     window._notices = notices;
@@ -551,7 +585,7 @@ async function toggleNoticeHistory(id) {
   const box = document.getElementById('nhist-' + id);
   if (!box.hidden) { box.hidden = true; return; }
   const history = await api(`/api/notices/${id}/history`);
-  box.innerHTML = history.map(h => `<div class="history-box">
+  box.innerHTML = history.map(h => html`<div class="history-box">
       <div class="meta">수정 전 · ${h.editedBy ?? ''} ${h.editedAt.replace('T', ' ').slice(0, 16)}</div>
       <div class="old">${h.previousTitle} ${fmtD(h.previousEventDate)}</div>
     </div>`).join('');
@@ -562,7 +596,7 @@ function startEditNotice(id) {
   const n = (window._notices ?? []).find(x => x.id === id);
   const box = document.getElementById('nedit-' + id);
   if (!box.hidden) { box.hidden = true; return; }
-  box.innerHTML = `
+  box.innerHTML = html`
     <textarea id="ne-title-${id}" rows="3" style="margin-top:8px">${n.title}</textarea>
     <div style="display:flex; gap:8px; margin-top:6px">
       <input id="ne-date-${id}" type="date" value="${n.eventDate ?? ''}" style="flex:1">
@@ -600,7 +634,7 @@ function showMsg(id, text, ok) {
 /* ===================== 재고 목록 (품목 클릭 → 입고/폐기) ===================== */
 async function viewStock() {
   $view.innerHTML = topbar('재고목록', 'home') +
-    `<p class="hint">부족한 품목이 맨 위로 정렬돼요. 품목을 누르면 바로 입고·폐기·수정할 수 있습니다.</p>
+    html`<p class="hint">부족한 품목이 맨 위로 정렬돼요. 품목을 누르면 바로 입고·폐기·수정할 수 있습니다.</p>
      <div id="stockGrid" class="stock-grid"></div>
      <p id="skMsg" class="msg" style="text-align:center"></p>`;
   loadStockGrid();
@@ -616,7 +650,7 @@ async function loadStockGrid() {
   window._items = items;
   const color = i => i.quantity <= i.minQuantity ? 'red'
                    : i.quantity <= i.minQuantity * 2 ? 'orange' : 'blue';
-  document.getElementById('stockGrid').innerHTML = items.map(i => `
+  document.getElementById('stockGrid').innerHTML = items.map(i => html`
     <div class="stock-card ${color(i)}" style="cursor:pointer" onclick="openStockSheet(${i.id})">
       <span class="nm">${i.name}</span>
       <span class="qt">${i.quantity}${i.unit ?? '개'}</span>
@@ -635,7 +669,7 @@ function openStockSheet(itemId) {
   el.className = 'sheet-backdrop';
   el.id = 'stockSheet';
   el.onclick = e => { if (e.target === el) closeStockSheet(); };
-  el.innerHTML = `
+  el.innerHTML = html`
     <div class="sheet">
       <h3>${sheetItem.name}</h3>
       <p class="cur">현재 ${sheetItem.quantity}${sheetItem.unit ?? '개'}
@@ -746,7 +780,7 @@ async function submitSheet() {
 /* ===================== 입고 / 폐기 (스테퍼) ===================== */
 let stepQty = 1;
 function stepperHtml() {
-  return `<div class="stepper">
+  return html`<div class="stepper">
     <button onclick="bumpQty(-1)">−</button>
     <input class="num" id="stepNum" type="number" min="1" value="${stepQty}" oninput="setStepQty(this.value)">
     <button onclick="bumpQty(1)">+</button>
@@ -764,7 +798,7 @@ async function viewInbound(preselectItemId) {
   stepQty = 1;
   const items = await api('/api/items');
   const preselect = preselectItemId ? Number(preselectItemId) : null;
-  $view.innerHTML = topbar('입고', 'home') + `
+  $view.innerHTML = topbar('입고', 'home') + html`
     <label class="field"><span>입고 방식</span>
       <select id="ibMode" onchange="toggleIbMode()">
         <option value="existing">기존 품목</option>
@@ -774,7 +808,7 @@ async function viewInbound(preselectItemId) {
     <div id="ibExisting">
       <label class="field"><span>품목</span>
         <select id="ibItem">${items.map(i =>
-          `<option value="${i.id}" ${i.id === preselect ? 'selected' : ''}>${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`).join('')}
+          html`<option value="${i.id}" ${i.id === preselect ? 'selected' : ''}>${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`)}
         </select>
       </label>
     </div>
@@ -819,10 +853,10 @@ async function submitInbound() {
 async function viewDispose() {
   stepQty = 1;
   const items = await api('/api/items');
-  $view.innerHTML = topbar('폐기', 'home') + `
+  $view.innerHTML = topbar('폐기', 'home') + html`
     <label class="field"><span>품목</span>
       <select id="dpItem">${items.map(i =>
-        `<option value="${i.id}">${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`).join('')}
+        html`<option value="${i.id}">${i.name} (현재 ${i.quantity}${i.unit ?? ''})</option>`)}
       </select>
     </label>
     ${stepperHtml()}
@@ -851,7 +885,7 @@ async function submitDispose() {
 let currentAudit = null;
 
 async function viewAudit() {
-  $view.innerHTML = topbar('실사', 'home') + `
+  $view.innerHTML = topbar('실사', 'home') + html`
     <p class="hint">사진을 찍으면 AI가 품목과 개수를 세서 기록(장부)과 비교합니다.
        미등록 품목은 확정 시 자동 등록됩니다.</p>
     <form id="scanForm" style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
@@ -881,10 +915,10 @@ async function viewAudit() {
 
 function renderAuditLines(audit) {
   currentAudit = audit;
-  document.getElementById('auditLines').innerHTML = audit.lines.map(l => `
+  document.getElementById('auditLines').innerHTML = audit.lines.map(l => html`
     <div class="audit-row sketch2">
       <span class="nm">${l.unregistered
-        ? `${l.recognizedName}<br><span class="badge-new">자동 등록 예정</span>`
+        ? html`${l.recognizedName}<br><span class="badge-new">자동 등록 예정</span>`
         : l.itemName}</span>
       <span class="cols">기록<br><b>${l.unregistered ? 0 : l.systemQuantity}</b></span>
       <span class="cols">실제<br>
@@ -896,7 +930,7 @@ function renderAuditLines(audit) {
 }
 
 async function saveLine(lineId) {
-  const input = document.querySelector(`input[data-line="${lineId}"]`);
+  const input = document.querySelector(html`input[data-line="${lineId}"]`);
   try {
     const audit = await api(`/api/audits/${currentAudit.id}/lines/${lineId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -924,7 +958,7 @@ async function cancelAudit() {
 
 /* ===================== 출근 ===================== */
 async function viewAttendance() {
-  $view.innerHTML = topbar('출근', 'home') + `
+  $view.innerHTML = topbar('출근', 'home') + html`
     <p class="page-sub">${me.displayName}님의 근태 · ${today()}</p>
     <div class="clock-list" id="clockList">불러오는 중...</div>
     <p id="atMsg" class="msg" style="text-align:center"></p>`;
@@ -942,12 +976,12 @@ async function loadAttendance() {
       ready: !!a.clockIn && !a.clockOut && (!a.breakAt || !!a.breakEnd) }
   ];
   // 아직 안 찍었으면 라벨만, 찍었으면 라벨(작게) + 기록된 시각(크게)
-  document.getElementById('clockList').innerHTML = steps.map(s => `
+  document.getElementById('clockList').innerHTML = steps.map(s => html`
     <button class="clock-btn${s.at ? ' done' : ''}" ${s.ready ? '' : 'disabled'}
             onclick="clock('${s.action}')">
       ${s.at
-        ? `<span class="clock-cap">${s.label}</span><span class="clock-at">${t(s.at)}</span>`
-        : `<span class="clock-label">${s.label}</span>`}
+        ? html`<span class="clock-cap">${s.label}</span><span class="clock-at">${t(s.at)}</span>`
+        : html`<span class="clock-label">${s.label}</span>`}
     </button>`).join('');
 }
 async function clock(action) {
@@ -962,8 +996,8 @@ let calY, calM;   // 표시 중인 연/월
 async function viewCalendar(keepMonth) {
   if (!keepMonth) { const d = new Date(); calY = d.getFullYear(); calM = d.getMonth() + 1; }
   $view.innerHTML = topbar('일정', 'home',
-    isOwner() ? `<button class="act" style="padding:5px 12px; font-size:0.9rem"
-                         onclick="toggleScheduleForm()">근무 등록</button>` : '') + `
+    isOwner() ? html`<button class="act" style="padding:5px 12px; font-size:0.9rem"
+                         onclick="toggleScheduleForm()">근무 등록</button>` : '') + html`
     <div id="schedForm" hidden class="sketch2" style="padding:14px; margin-bottom:14px"></div>
     <div class="cal-head">
       <button onclick="moveMonth(-1)">◀</button>
@@ -990,7 +1024,7 @@ async function viewCalendar(keepMonth) {
 
   const grid = document.getElementById('calGrid');
   grid.innerHTML = ['일','월','화','수','목','금','토'].map((d, i) =>
-    `<span class="dow ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}"
+    html`<span class="dow ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}"
            style="color:${i === 0 ? 'var(--red)' : i === 6 ? 'var(--blue)' : 'inherit'}">${d}</span>`).join('');
 
   const first = new Date(calY, calM - 1, 1).getDay();
@@ -1000,10 +1034,10 @@ async function viewCalendar(keepMonth) {
     const dateStr = `${calY}-${String(calM).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const dow = (first + d - 1) % 7;
     // 날짜 숫자를 <span>으로 감싸야 정확한 원이 그려진다 (칸은 가로가 더 넓음)
-    grid.innerHTML += `<button class="cal-cell ${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''}`
-      + `${dateStr === today() ? ' today' : ''}" onclick="showDay('${dateStr}', this)">`
-      + `<span class="d">${d}</span>`
-      + `${events[dateStr] ? '<span class="dot"></span>' : ''}</button>`;
+    grid.innerHTML += html`<button class="cal-cell ${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''}`
+      + html`${dateStr === today() ? ' today' : ''}" onclick="showDay('${dateStr}', this)">`
+      + html`<span class="d">${d}</span>`
+      + html`${events[dateStr] ? html`<span class="dot"></span>` : ''}</button>`;
   }
   window._calEvents = events;
 }
@@ -1020,11 +1054,11 @@ async function toggleScheduleForm() {
   if (!box.hidden) { box.hidden = true; return; }
   const members = (await api('/api/admin/members'))
     .filter(m => m.status === 'ACTIVE');
-  box.innerHTML = `
+  box.innerHTML = html`
     <h3 style="margin:0 0 10px">근무 스케줄 등록</h3>
     <label class="field"><span>직원</span>
       <select id="sc-member">${members.map(m =>
-        `<option value="${m.id}">${m.displayName}</option>`).join('')}</select></label>
+        html`<option value="${m.id}">${m.displayName}</option>`)}</select></label>
     <label class="field"><span>날짜</span>
       <input id="sc-date" type="date" value="${today()}"></label>
     <div style="display:flex; gap:8px">
@@ -1057,25 +1091,25 @@ function showDay(dateStr, cell) {
   if (cell) cell.classList.add('sel');
   const evs = window._calEvents[dateStr] ?? [];
   document.getElementById('dayEvents').innerHTML =
-    `<h3>${fmtD(dateStr)}</h3>` + (evs.length === 0
+    html`<h3>${fmtD(dateStr)}</h3>` + (evs.length === 0
       ? '<p class="hint">일정이 없습니다</p>'
-      : '<ul class="plain">' + evs.map(e => `<li>${e}</li>`).join('') + '</ul>');
+      : '<ul class="plain">' + evs.map(e => html`<li>${e}</li>`).join('') + '</ul>');
 }
 
 /* ===================== 일보 ===================== */
 async function viewReports() {
   $view.innerHTML = topbar('일보', 'home',
-    `<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
+    html`<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
              onclick="go('report-new')">✎ 작성</button>`) +
-    `<p style="font-weight:700; font-size:1.2rem">${today().replaceAll('-', ' - ')}</p>
+    html`<p style="font-weight:700; font-size:1.2rem">${today().replaceAll('-', ' - ')}</p>
      <div id="reportList">불러오는 중...</div>`;
   const reports = await api('/api/reports');
   document.getElementById('reportList').innerHTML = reports.length === 0
     ? '<p class="hint">작성된 일보가 없습니다. ✎ 버튼으로 작성하세요.</p>'
-    : reports.map(r => `<div>
+    : reports.map(r => html`<div>
         <div class="report-row sketch2" onclick="go('report', ${r.id})">
           <span>${r.author}${r.edited
-            ? `<button class="edited-btn"
+            ? html`<button class="edited-btn"
                        onclick="event.stopPropagation(); toggleReportHistory(${r.id}, 'lhist-${r.id}')"
                >수정됨</button>` : ''}</span>
           <span>${fmtD(r.reportDate)}</span>
@@ -1084,7 +1118,7 @@ async function viewReports() {
       </div>`).join('');
 }
 async function viewReportNew() {
-  $view.innerHTML = topbar('일보 작성', 'reports') + `
+  $view.innerHTML = topbar('일보 작성', 'reports') + html`
     <label class="field"><span>작성자</span>
       <input id="rpAuthor" value="${me.displayName}" placeholder="이름"></label>
     <label class="field"><span>날짜</span><input id="rpDate" type="date" value="${today()}"></label>
@@ -1116,12 +1150,12 @@ async function viewReportDetail(id) {
   window._report = r;
   const canEdit = isOwner() || r.author === me.displayName;
   $view.innerHTML = topbar('일보', 'reports',
-    canEdit ? `<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
-                       onclick="startEditReport()">✎ 수정</button>` : '') + `
+    canEdit ? html`<button class="act gray" style="padding:4px 14px; font-size:0.95rem"
+                       onclick="startEditReport()">✎ 수정</button>` : '') + html`
     <div class="sketch" style="padding:16px">
       <p style="font-weight:700; font-size:1.25rem; border-bottom:2px solid var(--ink); padding-bottom:8px">
         Title : ${r.author} ${fmtD(r.reportDate)}${
-          r.edited ? `<button class="edited-btn" onclick="toggleReportHistory(${r.id})">수정됨</button>` : ''}</p>
+          r.edited ? html`<button class="edited-btn" onclick="toggleReportHistory(${r.id})">수정됨</button>` : ''}</p>
       <div id="rhist" hidden></div>
       <div id="rbody"><p style="white-space:pre-wrap">${r.content ?? ''}</p></div>
     </div>
@@ -1142,7 +1176,7 @@ async function toggleReportHistory(id, boxId = 'rhist') {
   if (!box) return;
   if (!box.hidden) { box.hidden = true; return; }
   const history = await api(`/api/reports/${id}/history`);
-  box.innerHTML = history.map(h => `<div class="history-box">
+  box.innerHTML = history.map(h => html`<div class="history-box">
       <div class="meta">수정 전 · ${h.editedBy ?? ''} ${h.editedAt.replace('T', ' ').slice(0, 16)}
         ${h.previousReportDate ? '· ' + fmtD(h.previousReportDate) : ''}</div>
       <div class="old">${h.previousContent ?? ''}</div>
@@ -1155,11 +1189,11 @@ function startEditReport() {
   const body = document.getElementById('rbody');
   if (body.dataset.editing === '1') {
     body.dataset.editing = '';
-    body.innerHTML = `<p style="white-space:pre-wrap">${r.content ?? ''}</p>`;
+    body.innerHTML = html`<p style="white-space:pre-wrap">${r.content ?? ''}</p>`;
     return;
   }
   body.dataset.editing = '1';
-  body.innerHTML = `
+  body.innerHTML = html`
     <label class="field"><span>날짜</span>
       <input id="re-date" type="date" value="${r.reportDate}"></label>
     <textarea id="re-content" rows="8">${r.content ?? ''}</textarea>
@@ -1196,14 +1230,14 @@ async function loadComments(reportId) {
     : comments.map(c => {
         // 본인 댓글이거나 사장님이면 수정·삭제 가능
         const mine = isOwner() || c.author === me.displayName;
-        return `<div class="comment-row" id="cm${c.id}">
+        return html`<div class="comment-row" id="cm${c.id}">
           <div class="cm-head">
             <span class="who">${c.author}</span>
             <span class="when">${c.createdAt.replace('T', ' ').slice(5, 16)}</span>
             ${c.editedAt
-              ? `<button class="edited-btn" onclick="toggleCommentHistory(${c.id})">수정됨</button>`
+              ? html`<button class="edited-btn" onclick="toggleCommentHistory(${c.id})">수정됨</button>`
               : ''}
-            ${mine ? `<span class="cm-acts">
+            ${mine ? html`<span class="cm-acts">
                 <button class="cm-act" onclick="startEditComment(${c.id})">수정</button>
                 <button class="cm-act del" onclick="removeComment(${c.id})">삭제</button>
               </span>` : ''}
@@ -1220,7 +1254,7 @@ function startEditComment(id) {
   const c = (window._comments ?? []).find(x => x.id === id);
   if (!c) return;
   const body = document.getElementById('cmb' + id);
-  body.innerHTML = `
+  body.innerHTML = html`
     <div class="cm-edit">
       <input id="cme${id}" value="${c.content.replace(/"/g, '&quot;')}">
       <button class="act" style="padding:8px 14px" onclick="saveComment(${id})">저장</button>
@@ -1259,12 +1293,12 @@ async function toggleCommentHistory(id) {
     const list = await api(`/api/comments/${id}/history`);
     box.innerHTML = list.length === 0
       ? '<p class="hint" style="margin:6px 0">수정 이력이 없습니다.</p>'
-      : list.map(h => `<div class="history-box">
+      : list.map(h => html`<div class="history-box">
           <div class="meta">${h.editedBy} · ${h.editedAt.replace('T', ' ').slice(5, 16)} 수정 전</div>
           <div class="old">${h.previousContent}</div>
         </div>`).join('');
   } catch (e) {
-    box.innerHTML = `<p class="msg error" style="margin:6px 0">${e.message}</p>`;
+    box.innerHTML = html`<p class="msg error" style="margin:6px 0">${e.message}</p>`;
   }
 }
 async function addComment(reportId) {
@@ -1283,7 +1317,7 @@ let draft = { date: null, timeSlot: null, people: null, tableIds: [], customerNa
 
 /** 예약 메뉴 — 코스 예약 / 코스 없이 예약 / 예약 확인으로 분기 */
 async function viewReserve() {
-  $view.innerHTML = topbar('예약', 'home') + `
+  $view.innerHTML = topbar('예약', 'home') + html`
     <div class="menu-btns">
       <button class="act" onclick="go('course-list')">코스 예약</button>
       <button class="act" onclick="draft.courseName=null; go('reserve-new')">코스 없이 예약</button>
@@ -1301,34 +1335,34 @@ function courseGroupsHtml(courses, renderItem) {
     { accent: 'refill', title: '음료, 술 무제한 코스', items: courses.filter(c => c.unlimitedRefill) },
     { accent: 'normal', title: '일반 코스',           items: courses.filter(c => !c.unlimitedRefill) }
   ];
-  return `<ul class="plain course-list">` + groups.map(g => `
+  return html`<ul class="plain course-list">${groups.map(g => html`
       <li class="course-group-head cg-${g.accent}">${g.title}</li>
       ${g.items.length === 0
-        ? `<li class="course-group-empty">등록된 코스가 없습니다</li>`
-        : g.items.map(c => renderItem(c, g)).join('')}`).join('') + `</ul>`;
+        ? html`<li class="course-group-empty">등록된 코스가 없습니다</li>`
+        : g.items.map(c => renderItem(c, g))}`)}</ul>`;
 }
 
 /** 코스 예약 — 코스를 먼저 고르면 예약 받기 화면으로 이동 */
 async function viewCourseList() {
   $view.innerHTML = topbar('코스 예약', 'reserve')
-    + `<p class="page-sub">예약하실 코스를 선택해주세요</p>`
-    + `<div id="courseList">불러오는 중...</div>`;
+    + html`<p class="page-sub">예약하실 코스를 선택해주세요</p>`
+    + html`<div id="courseList">불러오는 중...</div>`;
   const box = document.getElementById('courseList');
   try {
     const s = await api('/api/store');
     box.innerHTML = s.courses.length === 0
       ? '<p class="hint">등록된 코스가 없습니다. 가게 설정에서 코스를 추가해 주세요.</p>'
-      : courseGroupsHtml(s.courses, (c, g) => `
+      : courseGroupsHtml(s.courses, (c, g) => html`
           <li class="course-row course-item cg-${g.accent}"
-              onclick="draft.courseName='${esc(c.name)}'; go('reserve-new')">
+              data-name="${c.name}" onclick="pickCourse(this)">
             <span class="c-name">${c.name}</span>
             <span class="c-right"><span class="c-radio" aria-hidden="true"></span></span>
           </li>`);
   } catch (e) {
-    box.innerHTML = `<p class="msg error">${e.message}</p>`;
+    box.innerHTML = html`<p class="msg error">${e.message}</p>`;
   }
 }
-function esc(s) { return s.replace(/'/g, "\\'"); }
+function pickCourse(el) { draft.courseName = el.dataset.name; go('reserve-new'); }
 function copyCode(ev, code) {
   if (!code) return;
   try { if (navigator.clipboard) navigator.clipboard.writeText(code); } catch (e) {}
@@ -1338,7 +1372,7 @@ function copyCode(ev, code) {
 
 /** 예약 확인 — 날짜별로 묶어서 보여주고, 누르면 상세로 */
 async function viewReserveList() {
-  $view.innerHTML = topbar('예약 확인', 'reserve') + `<div id="rlist">불러오는 중...</div>`;
+  $view.innerHTML = topbar('예약 확인', 'reserve') + html`<div id="rlist">불러오는 중...</div>`;
   try {
     const list = await api('/api/reservations/upcoming');
     const box = document.getElementById('rlist');
@@ -1346,24 +1380,24 @@ async function viewReserveList() {
       box.innerHTML = '<p class="hint">예정된 예약이 없습니다.</p>';
       return;
     }
-    let html = '', lastDate = null;
+    let rows = '', lastDate = null;
     for (const r of list) {
       if (r.reserveDate !== lastDate) {
         lastDate = r.reserveDate;
-        html += `<div class="date-head">${fmtD(r.reserveDate)}</div>`;
+        rows += html`<div class="date-head">${fmtD(r.reserveDate)}</div>`;
       }
-      html += `<div class="resv-row" onclick="go('reservation', ${r.id})">
+      rows += html`<div class="resv-row" onclick="go('reservation', ${r.id})">
           <span>${r.customerName || '(이름 없음)'}${r.courseName ? ' · ' + r.courseName : ''}</span>
           <span>${r.people}명
             ${r.status === 'ACTIVE'
-              ? '<span class="badge-seated">사용중</span>'
-              : '<span class="badge-free">공석</span>'}</span>
+              ? html`<span class="badge-seated">사용중</span>`
+              : html`<span class="badge-free">공석</span>`}</span>
         </div>`;
     }
-    box.innerHTML = html;
+    box.innerHTML = rows;
   } catch (e) {
     document.getElementById('rlist').innerHTML =
-      `<p class="msg error">${e.message}</p>`;
+      html`<p class="msg error">${e.message}</p>`;
   }
 }
 
@@ -1372,10 +1406,10 @@ async function viewReservationDetail(id) {
   let r;
   try { r = await api('/api/reservations/' + id); }
   catch (e) { $view.innerHTML = topbar('예약 확인', 'reserve-list')
-      + `<p class="msg error">${e.message}</p>`; return; }
+      + html`<p class="msg error">${e.message}</p>`; return; }
 
   const [, mm, dd] = r.reserveDate.split('-');
-  $view.innerHTML = topbar('예약 확인', 'reserve-list') + `
+  $view.innerHTML = topbar('예약 확인', 'reserve-list') + html`
     <div class="sketch resv-detail">
       <div class="who">${r.customerName || '(이름 없음)'}</div>
       <div>${r.courseName || '코스 없이 예약'}</div>
@@ -1385,11 +1419,11 @@ async function viewReservationDetail(id) {
       <div>테이블 ${r.tableNumbers.join(', ')}번
         <span class="hint">(총 ${r.totalCapacity}석)</span></div>
       <div>${r.status === 'ACTIVE'
-        ? '<span class="badge-seated">사용중</span>'
-        : '<span class="badge-free">공석</span>'}</div>
+        ? html`<span class="badge-seated">사용중</span>`
+        : html`<span class="badge-free">공석</span>`}</div>
       <div style="text-align:right; margin-top:14px">
         ${r.status === 'ACTIVE'
-          ? `<button class="ack-btn" onclick="releaseFromDetail(${r.id})">공석 처리</button>` : ''}
+          ? html`<button class="ack-btn" onclick="releaseFromDetail(${r.id})">공석 처리</button>` : ''}
         <button class="act danger" style="padding:6px 16px"
                 onclick="cancelFromDetail(${r.id})">예약취소</button>
       </div>
@@ -1413,19 +1447,19 @@ async function cancelFromDetail(id) {
 /** 예약 받기 — 날짜·시간·인원·테이블을 골라 새 예약을 등록 (코스 예약이면 draft.courseName이 채워져 있음) */
 async function viewReserveNew() {
   draft.date ??= today();
-  $view.innerHTML = topbar(draft.courseName ? '코스 예약' : '코스 없이 예약', 'reserve') + `
-    ${draft.courseName ? `<div class="sketch2" style="padding:10px 14px; margin-bottom:14px; text-align:center; font-weight:700">${draft.courseName}</div>` : ''}
+  $view.innerHTML = topbar(draft.courseName ? '코스 예약' : '코스 없이 예약', 'reserve') + html`
+    ${draft.courseName ? html`<div class="sketch2" style="padding:10px 14px; margin-bottom:14px; text-align:center; font-weight:700">${draft.courseName}</div>` : ''}
     <label class="field"><span>날짜</span>
       <input id="rvDate" type="date" value="${draft.date}" onchange="draft.date=this.value; draft.tableIds=[]; render()"></label>
     <label class="field"><span>시간</span>
       <select id="rvTime" onchange="draft.timeSlot=this.value; draft.tableIds=[]">
         <option value="">선택</option>
-        ${TIME_SLOTS.map(t => `<option ${draft.timeSlot === t ? 'selected' : ''}>${t}</option>`).join('')}
+        ${TIME_SLOTS.map(t => html`<option ${draft.timeSlot === t ? 'selected' : ''}>${t}</option>`)}
       </select></label>
     <label class="field"><span>인원</span>
       <select id="rvPeople" onchange="draft.people=Number(this.value)">
         <option value="">선택</option>
-        ${[1,2,3,4,5,6,7,8].map(n => `<option ${draft.people === n ? 'selected' : ''} value="${n}">${n}명</option>`).join('')}
+        ${[1,2,3,4,5,6,7,8].map(n => html`<option ${draft.people === n ? 'selected' : ''} value="${n}">${n}명</option>`)}
       </select></label>
     <label class="field"><span>예약자명</span>
       <input id="rvName" value="${draft.customerName}" placeholder="예약자 이름"
@@ -1446,16 +1480,16 @@ async function loadDayReservations() {
   const list = await api('/api/reservations?date=' + draft.date);
   document.getElementById('rvList').innerHTML = list.length === 0
     ? '<li class="hint">예약이 없습니다</li>'
-    : list.map(r => `<li>
+    : list.map(r => html`<li>
         <div>${r.timeSlot} · 테이블 ${r.tableNumbers.join(', ')}번 · ${r.people}명
           ${r.customerName ? '· ' + r.customerName : ''}
           ${r.courseName ? '· ' + r.courseName : ''}
           ${r.status === 'ACTIVE'
-            ? '<span class="badge-seated">사용중</span>'
-            : '<span class="badge-free">공석</span>'}</div>
+            ? html`<span class="badge-seated">사용중</span>`
+            : html`<span class="badge-free">공석</span>`}</div>
         <div style="margin-top:4px">
           ${r.status === 'ACTIVE'
-            ? `<button class="ack-btn" onclick="releaseReserve(${r.id})">공석 처리</button>` : ''}
+            ? html`<button class="ack-btn" onclick="releaseReserve(${r.id})">공석 처리</button>` : ''}
           <button class="del" style="border:none;background:none;color:var(--red);cursor:pointer;font-family:inherit"
                   onclick="cancelReserve(${r.id})">예약 취소</button>
         </div></li>`).join('');
@@ -1481,7 +1515,7 @@ function openTableMap() {
 async function viewTables() {
   if (!draft.timeSlot) { go('reserve-new'); return; }
   $view.innerHTML = topbar(`테이블 선택 (${fmtD(draft.date)} ${draft.timeSlot})`, 'reserve-new')
-    + `<div id="tableMapWrap"></div>`;
+    + html`<div id="tableMapWrap"></div>`;
   window._tables = await api(`/api/tables?date=${draft.date}&timeSlot=${draft.timeSlot}`);
   renderTableMap();
 }
@@ -1494,14 +1528,14 @@ function renderTableMap() {
   const need = draft.people ?? 0;
   const enough = picked.length > 0 && seats >= need;
 
-  document.getElementById('tableMapWrap').innerHTML = `
+  document.getElementById('tableMapWrap').innerHTML = html`
     <p class="hint" style="text-align:center">
       빨간 테이블은 사용중(공석 처리 전) · 여러 개를 눌러 붙여 앉힐 수 있습니다</p>
-    <div class="table-grid">` + tables.map(t => `
+    <div class="table-grid">` + tables.map(t => html`
       <button class="tbl-cell ${t.reserved ? 'reserved' : ''} ${draft.tableIds.includes(t.id) ? 'sel' : ''}"
-              ${t.reserved ? 'disabled' : `onclick="toggleTable(${t.id})"`}>
+              ${t.reserved ? 'disabled' : html`onclick="toggleTable(${t.id})"`}>
         <span class="tno">${t.number}</span><small>${t.capacity}인</small>
-      </button>`).join('') + `</div>
+      </button>`).join('') + html`</div>
     <div class="sketch2" style="padding:12px; margin-top:14px; text-align:center">
       <div style="font-weight:700; font-size:1.1rem">
         선택 ${picked.length}개 · 총 ${seats}석 / 인원 ${need}명
@@ -1537,13 +1571,13 @@ async function submitReserve() {
 
 /* ===================== 가게 설정 (사장님) ===================== */
 async function viewSettings() {
-  $view.innerHTML = topbar('가게 설정', 'home') + `<div id="settingsBody">불러오는 중...</div>`;
+  $view.innerHTML = topbar('가게 설정', 'home') + html`<div id="settingsBody">불러오는 중...</div>`;
   loadSettings();
 }
 async function loadSettings() {
   const s = await api('/api/store');
   const t = v => v ? v.slice(0, 5) : '';
-  document.getElementById('settingsBody').innerHTML = `
+  document.getElementById('settingsBody').innerHTML = html`
     <div class="sketch" style="padding:16px; margin-bottom:14px">
       <label class="field"><span>가게 이름</span><input id="stName" value="${s.name}"></label>
       <div style="display:flex; gap:8px">
@@ -1567,12 +1601,12 @@ async function loadSettings() {
 
     <div class="sketch" style="padding:16px">
       <h3 style="margin:0 0 8px">테이블 구성</h3>
-      <div id="stTables">${s.tables.map(tb => `
+      <div id="stTables">${s.tables.map(tb => html`
         <div style="display:flex; justify-content:space-between; align-items:center;
                     padding:6px 0; border-bottom:2px solid #d9d2bc">
           <span><b>${tb.number}번</b> · ${tb.capacity}인</span>
           <button class="del" onclick="delTable(${tb.id})">삭제</button>
-        </div>`).join('')}</div>
+        </div>`)}</div>
       <div style="display:flex; gap:8px; margin-top:10px; align-items:flex-end">
         <label class="field" style="flex:1; margin:0"><span>번호</span>
           <input id="tbNum" type="number" min="1"></label>
@@ -1586,11 +1620,11 @@ async function loadSettings() {
       <h3 style="margin:0 0 8px">코스 메뉴</h3>
       <p class="hint" style="margin-top:0">코스는 "음료·술 무제한" 여부로 묶여 표시됩니다.
         시간제한(분)은 선택 사항이며, 값을 넣으면 그 시간이 지난 뒤 테이블이 자동으로 공석 처리됩니다.</p>
-      <div id="stCourses">${courseGroupsHtml(s.courses, (c, g) => `
+      <div id="stCourses">${courseGroupsHtml(s.courses, (c, g) => html`
         <li class="course-row course-item static cg-${g.accent}">
           <span class="c-name">${c.name}</span>
           <span class="c-right">
-            ${c.durationMinutes ? `<span class="badge-timed">${c.durationMinutes}분</span>` : ''}
+            ${c.durationMinutes ? html`<span class="badge-timed">${c.durationMinutes}분</span>` : ''}
             <button class="del" onclick="delCourse(${c.id})">삭제</button>
           </span>
         </li>`)}</div>

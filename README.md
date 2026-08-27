@@ -11,7 +11,9 @@ Figma 디자인을 Spring Boot로 구현한 매장관리 웹앱입니다.
 ```
 
 - 접속: http://localhost:8080 (로그인 필요 — 데모 계정: 사장님 boss/1234, 알바생 staff/1234, 승인 대기 pend/1234)
-- H2 콘솔: http://localhost:8080/h2-console (JDBC URL: `jdbc:h2:mem:izacare`)
+- H2 콘솔: 기본 **꺼짐**. 로컬에서 볼 때만 `H2_CONSOLE=true ./gradlew bootRun` 으로 켜면
+  http://localhost:8080/h2-console 접속 가능 (JDBC URL: `jdbc:h2:mem:izacare`).
+  인증 없이 DB 전체를 열람·수정할 수 있으므로 배포 환경에서는 켜지 말 것.
 - 시연용 초기 데이터 9개 품목이 자동 등록됩니다.
 
 ## AI 실사 (핵심 기능)
@@ -66,3 +68,22 @@ com.izacare
 ```
 
 정적 화면은 `src/main/resources/static/` 아래에 있습니다 — `index.html`(SPA), `app.css`(디자인 시스템).
+
+## 화면을 새로 만들 때 (중요)
+
+`index.html`에서 HTML을 만들 때는 **반드시 ``html`...` `` 태그드 템플릿**을 쓰세요.
+삽입되는 `${값}`을 자동으로 이스케이프해 XSS를 막습니다. 그냥 백틱으로 만들어
+`innerHTML`에 넣으면 사용자가 입력한 이름·공지·품목명으로 스크립트가 실행됩니다.
+
+```js
+el.innerHTML = html`<span>${item.name}</span>`;   // O
+el.innerHTML = `<span>${item.name}</span>`;       // X — XSS
+```
+
+`onclick="fn('${값}')"` 처럼 **속성 안의 JS 문자열에는 사용자 입력을 넣지 마세요.**
+브라우저가 속성을 먼저 디코드하므로 이스케이프로 막히지 않습니다.
+`data-*` 속성에 담고 `this.dataset`으로 읽으세요.
+
+리버스 프록시 뒤에 배포할 때만 `app.trust-proxy=true`를 켜세요.
+켜면 `X-Forwarded-For`를 클라이언트 IP로 신뢰하는데, 프록시가 없으면
+누구나 헤더를 위조해 로그인 시도 횟수 제한을 무력화할 수 있습니다.

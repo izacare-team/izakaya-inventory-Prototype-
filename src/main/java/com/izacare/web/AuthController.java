@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -36,6 +37,10 @@ public class AuthController {
     private final SignupGuard signupGuard;
     private final LoginGuard loginGuard;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+
+    /** 리버스 프록시 뒤에 있을 때만 true. 기본 false — 헤더 위조로 잠금을 우회할 수 있기 때문. */
+    @Value("${app.trust-proxy:false}")
+    private boolean trustProxy;
 
     public AuthController(MemberRepository memberRepository,
                           StoreRepository storeRepository,
@@ -138,6 +143,7 @@ public class AuthController {
         }
 
         loginGuard.clear(guardKey);
+        request.changeSessionId();   // 세션 고정 방지 — 로그인 시 세션 ID 재발급
         session.setAttribute(SESSION_KEY, member.getId());
         return MeResponse.from(member);
     }
@@ -158,10 +164,17 @@ public class AuthController {
                 .orElse(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
     }
 
-    /** 프록시 뒤에서도 실제 클라이언트 IP를 얻는다 */
+    /**
+     * 클라이언트 IP.
+     * X-Forwarded-For는 클라이언트가 임의로 보낼 수 있어, 신뢰할 수 있는 프록시
+     * 뒤에 있을 때(app.trust-proxy=true)만 사용한다. 그렇지 않으면 요청마다
+     * 헤더를 바꿔 LoginGuard의 시도 횟수 잠금을 무한히 우회할 수 있다.
+     */
     private String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        if (trustProxy) {
+            String xff = request.getHeader("X-Forwarded-For");
+            if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        }
         return request.getRemoteAddr();
     }
 }
