@@ -57,10 +57,8 @@ public class DataSeeder {
             ));
 
             courseRepository.saveAll(List.of(
-                    new Course(sid, "음료/주류 무제한", null, true),
                     new Course(sid, "모둠사시미 코스 (120분)", 120, true),
-                    new Course(sid, "사시미 코스 (120분)", 120, false),
-                    new Course(sid, "일반 코스 요리", null, false),
+                    new Course(sid, "사시미 코스 (120분)", 120, true),
                     new Course(sid, "모둠사시미 코스 (6종류)", null, false),
                     new Course(sid, "사시미 코스 (5종류)", null, false),
                     new Course(sid, "닭 요리 코스 (4종류)", null, false)

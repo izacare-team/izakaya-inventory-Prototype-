@@ -888,10 +888,12 @@ async function viewAudit() {
   $view.innerHTML = topbar('실사', 'home') + html`
     <p class="hint">사진을 찍으면 AI가 품목과 개수를 세서 기록(장부)과 비교합니다.
        미등록 품목은 확정 시 자동 등록됩니다.</p>
-    <form id="scanForm" style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
-      <input type="file" name="image" accept="image/*" capture="environment" required>
-      <button class="act" style="white-space:nowrap">촬영/인식</button>
-    </form>
+    <div style="display:flex; gap:8px; margin-bottom:8px">
+      <label class="act" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px">📷 촬영
+        <input type="file" accept="image/*" capture="environment" hidden onchange="scanImage(this)"></label>
+      <label class="act gray" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px">🖼️ 파일 선택
+        <input type="file" accept="image/*" hidden onchange="scanImage(this)"></label>
+    </div>
     <p id="scanMsg" class="msg"></p>
     <div id="auditLines"></div>
     <div id="auditActions" hidden style="text-align:center; margin:14px 0">
@@ -900,17 +902,22 @@ async function viewAudit() {
     </div>
     <p id="confirmMsg" class="msg" style="text-align:center"></p>`;
 
-  document.getElementById('scanForm').onsubmit = async e => {
-    e.preventDefault();
-    showMsg('scanMsg', 'AI 인식 중...', true);
-    try {
-      const res = await fetch('/api/audits/scan', { method: 'POST', body: new FormData(e.target) });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error);
-      showMsg('scanMsg', `인식 완료 — ${body.lines.length}개 품목`, true);
-      renderAuditLines(body);
-    } catch (err) { showMsg('scanMsg', err.message, false); }
-  };
+}
+
+/** 촬영 또는 파일 선택으로 고른 사진을 AI 인식에 보낸다 (둘 다 지원) */
+async function scanImage(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  showMsg('scanMsg', 'AI 인식 중...', true);
+  try {
+    const fd = new FormData(); fd.append('image', file);
+    const res = await fetch('/api/audits/scan', { method: 'POST', body: fd });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error);
+    showMsg('scanMsg', `인식 완료 — ${body.lines.length}개 품목`, true);
+    renderAuditLines(body);
+  } catch (err) { showMsg('scanMsg', err.message, false); }
+  finally { input.value = ''; }
 }
 
 function renderAuditLines(audit) {
@@ -1052,6 +1059,8 @@ function moveMonth(d) {
 async function toggleScheduleForm() {
   const box = document.getElementById('schedForm');
   if (!box.hidden) { box.hidden = true; return; }
+  schedDates = [];
+  { const n = new Date(); schedCalY = n.getFullYear(); schedCalM = n.getMonth() + 1; }
   const members = (await api('/api/admin/members'))
     .filter(m => m.status === 'ACTIVE');
   box.innerHTML = html`
@@ -1059,8 +1068,16 @@ async function toggleScheduleForm() {
     <label class="field"><span>직원</span>
       <select id="sc-member">${members.map(m =>
         html`<option value="${m.id}">${m.displayName}</option>`)}</select></label>
-    <label class="field"><span>날짜</span>
-      <input id="sc-date" type="date" value="${today()}"></label>
+    <label class="field" style="margin-bottom:6px"><span>근무일 — 달력에서 드래그로 여러 날, 개별 탭으로 추가/해제</span></label>
+    <div class="sc-cal-wrap sketch2" style="padding:10px; margin-bottom:10px">
+      <div class="sc-cal-head">
+        <button type="button" onclick="schedCalMove(-1)">◀</button>
+        <b id="sc-cal-title"></b>
+        <button type="button" onclick="schedCalMove(1)">▶</button>
+      </div>
+      <div id="sc-cal" class="sc-cal-grid"></div>
+    </div>
+    <div id="sc-dateChips" style="display:flex; flex-wrap:wrap; gap:6px; margin:0 0 14px"></div>
     <div style="display:flex; gap:8px">
       <label class="field" style="flex:1"><span>시작</span>
         <input id="sc-start" type="time" value="18:00"></label>
@@ -1072,17 +1089,127 @@ async function toggleScheduleForm() {
       <button class="act" onclick="submitSchedule()">등록 + 알림 발송</button></div>
     <p id="scMsg" class="msg" style="text-align:center"></p>`;
   box.hidden = false;
+  renderSchedCal();
+  bindSchedCal();
+}
+let schedDates = [];
+let schedCalY, schedCalM;
+let _scDrag = null;   // 드래그 중 상태: {anchor, current, base(Set), mode}
+
+function schedCalMove(d) {
+  schedCalM += d;
+  if (schedCalM === 0)  { schedCalM = 12; schedCalY--; }
+  if (schedCalM === 13) { schedCalM = 1;  schedCalY++; }
+  renderSchedCal();
+}
+function isoOf(y, m, d) {
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+/** 폼 안 미니달력 그리기 — 선택된 날은 파랗게, 오늘은 테두리로 */
+function renderSchedCal() {
+  const grid = document.getElementById('sc-cal');
+  if (!grid) return;
+  document.getElementById('sc-cal-title').textContent =
+    `${schedCalY}년 ${String(schedCalM).padStart(2, '0')}월`;
+  const dows = ['일', '월', '화', '수', '목', '금', '토'];
+  let h = dows.map(w => html`<div class="sc-cal-dow">${w}</div>`).join('');
+  const first = new Date(schedCalY, schedCalM - 1, 1).getDay();
+  const days = new Date(schedCalY, schedCalM, 0).getDate();
+  for (let i = 0; i < first; i++) h += html`<div class="sc-cal-day blank"></div>`;
+  for (let d = 1; d <= days; d++) {
+    const iso = isoOf(schedCalY, schedCalM, d);
+    const dow = (first + d - 1) % 7;
+    const cls = ['sc-cal-day', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
+                 schedDates.includes(iso) ? 'sel' : '', iso === today() ? 'today' : '']
+                .filter(Boolean).join(' ');
+    h += html`<div class="${cls}" data-date="${iso}">${d}</div>`;
+  }
+  grid.innerHTML = h;
+  updateSchedSummary();
+}
+function rangeDates(a, b) {
+  let s = new Date(a), e = new Date(b);
+  if (s > e) { const t = s; s = e; e = t; }
+  const out = [];
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    out.push(isoOf(d.getFullYear(), d.getMonth() + 1, d.getDate()));
+  }
+  return out;
+}
+/** 드래그 중 미리보기: 기준 선택(base)에 앵커~현재 범위를 add/remove로 적용 */
+function scDragSet() {
+  if (!_scDrag) return new Set(schedDates);
+  const set = new Set(_scDrag.base);
+  for (const iso of rangeDates(_scDrag.anchor, _scDrag.current)) {
+    if (_scDrag.mode === 'add') set.add(iso); else set.delete(iso);
+  }
+  return set;
+}
+function paintSchedCal(set) {
+  document.querySelectorAll('#sc-cal .sc-cal-day[data-date]').forEach(c => {
+    c.classList.toggle('sel', set.has(c.dataset.date));
+  });
+}
+function scCellAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el && el.closest('.sc-cal-day[data-date]');
+}
+/** 드래그 + 개별 탭 — 터치/마우스 모두 지원 (스크롤 방지는 touch-action:none) */
+function bindSchedCal() {
+  const grid = document.getElementById('sc-cal');
+  if (!grid || grid._bound) return;
+  grid._bound = true;
+  grid.addEventListener('pointerdown', e => {
+    const cell = e.target.closest('.sc-cal-day[data-date]');
+    if (!cell) return;
+    e.preventDefault();
+    const iso = cell.dataset.date;
+    _scDrag = { anchor: iso, current: iso, base: new Set(schedDates),
+                mode: schedDates.includes(iso) ? 'remove' : 'add' };
+    try { grid.setPointerCapture(e.pointerId); } catch (_) {}
+    paintSchedCal(scDragSet());
+  });
+  grid.addEventListener('pointermove', e => {
+    if (!_scDrag) return;
+    const cell = scCellAt(e.clientX, e.clientY);
+    if (!cell) return;
+    _scDrag.current = cell.dataset.date;
+    paintSchedCal(scDragSet());
+  });
+  const end = () => {
+    if (!_scDrag) return;
+    schedDates = [...scDragSet()].sort();
+    _scDrag = null;
+    updateSchedSummary();
+  };
+  grid.addEventListener('pointerup', end);
+  grid.addEventListener('pointercancel', end);
+}
+function removeSchedDate(d) { schedDates = schedDates.filter(x => x !== d); renderSchedCal(); }
+function updateSchedSummary() {
+  const box = document.getElementById('sc-dateChips');
+  if (!box) return;
+  box.innerHTML = schedDates.length === 0
+    ? html`<span class="hint">근무일을 달력에서 선택하세요</span>`
+    : html`<span class="hint" style="width:100%">선택 ${schedDates.length}일</span>`
+      + schedDates.map(d =>
+          html`<span class="date-chip">${fmtD(d)}<button type="button" onclick="removeSchedDate('${d}')">×</button></span>`).join('');
 }
 async function submitSchedule() {
+  const memberId = Number(document.getElementById('sc-member').value);
+  const dates = schedDates.slice();
+  if (dates.length === 0) { showMsg('scMsg', '근무일을 1개 이상 선택하세요.', false); return; }
+  const startTime = document.getElementById('sc-start').value;
+  const endTime = document.getElementById('sc-end').value;
+  const memo = document.getElementById('sc-memo').value;
   try {
-    const s = await postJson('/api/schedules', {
-      memberId: Number(document.getElementById('sc-member').value),
-      workDate: document.getElementById('sc-date').value,
-      startTime: document.getElementById('sc-start').value,
-      endTime: document.getElementById('sc-end').value,
-      memo: document.getElementById('sc-memo').value
-    });
-    showMsg('scMsg', `${s.memberName}님에게 알림을 보냈습니다.`, true);
+    let name = '';
+    for (const d of dates) {
+      const s = await postJson('/api/schedules', { memberId, workDate: d, startTime, endTime, memo });
+      name = s.memberName;
+    }
+    showMsg('scMsg', `${name}님에게 ${dates.length}일 근무를 등록하고 알림을 보냈습니다.`, true);
+    schedDates = [];
     viewCalendar(true);
   } catch (e) { showMsg('scMsg', e.message, false); }
 }
@@ -1554,6 +1681,16 @@ function toggleTable(id) {
   renderTableMap();
 }
 
+/** 화면 중앙에 뜨는 확정 팝업 — 1.8초 뒤 자동으로 닫히고, 눌러도 닫힌다 */
+function showToast(text, icon = '✅') {
+  const back = document.createElement('div');
+  back.className = 'toast-backdrop';
+  back.innerHTML = html`<div class="toast-pop"><div class="ic">${icon}</div><div class="tx">${text}</div></div>`;
+  const close = () => back.remove();
+  back.addEventListener('click', close);
+  document.body.appendChild(back);
+  setTimeout(close, 1800);
+}
 async function submitReserve() {
   if (!draft.timeSlot || !draft.people || draft.tableIds.length === 0) {
     showMsg('rvMsg', '시간·인원·테이블을 모두 선택하세요.', false); return;
@@ -1563,6 +1700,7 @@ async function submitReserve() {
       reserveDate: draft.date, timeSlot: draft.timeSlot, people: draft.people,
       tableIds: draft.tableIds, customerName: draft.customerName, courseName: draft.courseName
     });
+    showToast('예약이 확정되었습니다', '🎉');
     showMsg('rvMsg', '예약이 확정되었습니다.', true);
     draft.tableIds = []; draft.timeSlot = null; draft.people = null;
     loadDayReservations();
