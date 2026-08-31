@@ -24,6 +24,7 @@ dependencies {
     implementation 'org.springframework.security:spring-security-crypto'   // BCrypt 해싱만 사용
     runtimeOnly 'com.h2database:h2'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'   // Gradle 9는 런처를 명시해야 테스트가 뜬다
 }
 
 tasks.named('test') {

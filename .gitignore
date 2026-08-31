@@ -37,3 +37,9 @@ logs/
 
 # ===== 백업 파일 =====
 *.bak
+
+# ===== 런타임 데이터 (H2 파일 DB + 실사 사진) =====
+/data/
+
+# Playwright MCP 임시 산출물
+.playwright-mcp/

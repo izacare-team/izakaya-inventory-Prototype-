@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -31,17 +32,20 @@ public class StoreSettingController {
     private final ReservationRepository reservationRepository;
     private final CourseRepository courseRepository;
     private final StoreCodeGenerator codeGenerator;
+    private final ClientIpResolver clientIpResolver;
 
     public StoreSettingController(StoreRepository storeRepository,
                                   DiningTableRepository tableRepository,
                                   ReservationRepository reservationRepository,
                                   CourseRepository courseRepository,
-                                  StoreCodeGenerator codeGenerator) {
+                                  StoreCodeGenerator codeGenerator,
+                                  ClientIpResolver clientIpResolver) {
         this.storeRepository = storeRepository;
         this.tableRepository = tableRepository;
         this.reservationRepository = reservationRepository;
         this.courseRepository = courseRepository;
         this.codeGenerator = codeGenerator;
+        this.clientIpResolver = clientIpResolver;
     }
 
     private Member me(HttpServletRequest request) {
@@ -56,7 +60,13 @@ public class StoreSettingController {
     }
 
     public record StoreInfo(String name, String code, LocalTime open, LocalTime close,
-                            List<TableInfo> tables, List<CourseInfo> courses) {}
+                            List<TableInfo> tables, List<CourseInfo> courses,
+                            AttendanceLocation attendanceLocation) {}
+    /** 출근 위치 확인 설정 (사장님에게만 내려간다) */
+    public record AttendanceLocation(Double latitude, Double longitude,
+                                     int radius, String allowedIp) {}
+    public record LocationUpdate(@NotNull Double latitude, @NotNull Double longitude,
+                                 Integer radius) {}
     public record TableInfo(Long id, int number, int capacity) {}
     public record CourseInfo(Long id, String name, Integer durationMinutes, boolean unlimitedRefill) {}
     public record StoreUpdate(@NotBlank String name, String open, String close) {}
@@ -73,8 +83,14 @@ public class StoreSettingController {
         List<CourseInfo> courses = courseRepository.findByStoreIdOrderByIdAsc(s.getId()).stream()
                 .map(c -> new CourseInfo(c.getId(), c.getName(), c.getDurationMinutes(), c.isUnlimitedRefill()))
                 .toList();
-        String code = me(request).isOwner() ? s.getCode() : null;
-        return new StoreInfo(s.getName(), code, s.getBusinessOpen(), s.getBusinessClose(), tables, courses);
+        boolean owner = me(request).isOwner();
+        String code = owner ? s.getCode() : null;
+        AttendanceLocation location = owner
+                ? new AttendanceLocation(s.getLatitude(), s.getLongitude(),
+                                         s.getAttendanceRadius(), s.getAllowedIp())
+                : null;
+        return new StoreInfo(s.getName(), code, s.getBusinessOpen(), s.getBusinessClose(),
+                tables, courses, location);
     }
 
     @PatchMapping
@@ -138,6 +154,32 @@ public class StoreSettingController {
     }
 
     /** 가게 코드 재발급 — 유출 시 이전 코드를 무효화한다 */
+    // ===== 출근 위치 확인 설정 =====
+
+    /** 사장님이 매장에서 "현재 위치로 설정"을 눌렀을 때 — 그 좌표가 매장 기준점이 된다 */
+    @PatchMapping("/attendance-location")
+    public StoreInfo setAttendanceLocation(@Valid @RequestBody LocationUpdate req,
+                                           HttpServletRequest request) {
+        requireOwner(request);
+        myStore(request).setAttendanceLocation(req.latitude(), req.longitude(), req.radius());
+        return info(request);
+    }
+
+    /** 매장 Wi-Fi에서 이 버튼을 눌러야 한다 — 지금 접속한 공인 IP를 매장 IP로 등록한다 */
+    @PostMapping("/attendance-ip")
+    public StoreInfo setAttendanceIp(HttpServletRequest request) {
+        requireOwner(request);
+        myStore(request).setAllowedIp(clientIpResolver.resolve(request));
+        return info(request);
+    }
+
+    @DeleteMapping("/attendance-ip")
+    public StoreInfo clearAttendanceIp(HttpServletRequest request) {
+        requireOwner(request);
+        myStore(request).setAllowedIp(null);
+        return info(request);
+    }
+
     @PostMapping("/regenerate-code")
     public StoreInfo regenerateCode(HttpServletRequest request) {
         requireOwner(request);

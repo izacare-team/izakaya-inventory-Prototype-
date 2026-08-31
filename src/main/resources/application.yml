@@ -3,7 +3,8 @@ spring:
     # secret.yml(API 키 파일)이 있으면 불러오고, 없어도 에러 없이 mock 모드로 실행됨
     import: optional:classpath:secret.yml
   datasource:
-    url: jdbc:h2:mem:izacare;DB_CLOSE_DELAY=-1
+    # 파일 DB — 서버를 껐다 켜도 재고/실사 이력이 남는다 (인메모리였을 때는 매번 초기화됐음)
+    url: jdbc:h2:file:./data/izacare
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -20,14 +21,16 @@ spring:
   servlet:
     multipart:
       max-file-size: 10MB
-      max-request-size: 10MB
+      max-request-size: 40MB   # 실사 사진 여러 장을 한 번에 올림 (브라우저에서 1280px로 줄여 보냄)
 
 vision:
   # gemini | mock  — 실제 키는 secret.yml에서 설정 (이 파일에는 키를 적지 마세요!)
   provider: ${VISION_PROVIDER:mock}
   gemini:
     api-key: ${GEMINI_API_KEY:}
-    model: gemini-3.7-flash
+    model: ${GEMINI_MODEL:gemini-3.5-flash}   # 3.7-flash는 혼잡으로 503 빈발
+  # 실사 사진 원본 저장 위치 — 나중에 수량 분쟁이 났을 때 근거가 된다
+  image-dir: ${VISION_IMAGE_DIR:./data/audit-images}
 
 server:
   port: 8080

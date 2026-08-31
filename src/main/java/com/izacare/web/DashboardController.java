@@ -103,7 +103,10 @@ public class DashboardController {
                 .filter(a -> a.getClockIn() != null && a.getClockOut() == null)
                 .map(a -> new DetailRow(
                         a.getStaffName() + " · " + a.getClockIn().format(hhmm) + " 출근"
-                                + (a.getBreakAt() != null && a.getBreakEnd() == null ? " (휴게 중)" : ""),
+                                + (a.getBreakAt() != null && a.getBreakEnd() == null ? " (휴게 중)" : "")
+                                // 매장 밖/위치 미확인 출근은 사장님이 바로 알아볼 수 있게 붙인다
+                                + (a.isLocationSuspicious()
+                                   ? " · " + StoreController.locationLabel(a) : ""),
                         "staff", null))
                 .toList();
 

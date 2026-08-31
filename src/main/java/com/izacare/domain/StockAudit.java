@@ -36,6 +36,15 @@ public class StockAudit {
     @OneToMany(mappedBy = "audit", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<AuditLine> lines = new ArrayList<>();
 
+    /**
+     * 실사에 쓰인 사진 파일명들 (vision.image-dir 기준 상대 경로).
+     * 수량 조정의 근거이므로 사진을 버리지 않고 남긴다 — 나중에 분쟁이 나면 이걸 본다.
+     */
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "stock_audit_image", joinColumns = @JoinColumn(name = "audit_id"))
+    @Column(name = "file_name", nullable = false)
+    private List<String> imageFiles = new ArrayList<>();
+
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime confirmedAt;
 
@@ -45,6 +54,10 @@ public class StockAudit {
         this.storeId = storeId;
         this.source = source;
         this.rawAiResponse = rawAiResponse;
+    }
+
+    public void addImageFile(String fileName) {
+        imageFiles.add(fileName);
     }
 
     public void addLine(AuditLine line) {
@@ -73,6 +86,7 @@ public class StockAudit {
     public String getSource() { return source; }
     public String getRawAiResponse() { return rawAiResponse; }
     public List<AuditLine> getLines() { return lines; }
+    public List<String> getImageFiles() { return imageFiles; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getConfirmedAt() { return confirmedAt; }
 }

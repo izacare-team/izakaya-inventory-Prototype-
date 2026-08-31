@@ -17,9 +17,10 @@ import java.util.Random;
 public class MockVisionClient implements VisionAiClient {
 
     @Override
-    public VisionResult recognize(byte[] imageBytes, String contentType, List<String> knownItemNames) {
-        // 이미지 바이트로 시드를 만들어 같은 사진 = 같은 결과가 나오게 함
-        Random random = new Random(imageBytes.length);
+    public VisionResult recognize(List<byte[]> images, String contentType, List<String> knownItemNames) {
+        // 이미지 바이트 수로 시드를 만들어 같은 사진 = 같은 결과가 나오게 함
+        int totalBytes = images.stream().mapToInt(b -> b.length).sum();
+        Random random = new Random(totalBytes);
 
         List<RecognizedItem> items = new ArrayList<>();
         for (String name : knownItemNames) {
@@ -38,6 +39,6 @@ public class MockVisionClient implements VisionAiClient {
         }
 
         return new VisionResult(items,
-                "{\"mock\":true,\"imageSize\":" + imageBytes.length + "}");
+                "{\"mock\":true,\"imageCount\":" + images.size() + ",\"imageSize\":" + totalBytes + "}");
     }
 }
