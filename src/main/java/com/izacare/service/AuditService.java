@@ -15,7 +15,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * AI 실사 핵심 흐름:
@@ -32,42 +40,109 @@ public class AuditService {
     private final StockAuditRepository auditRepository;
     private final StockTransactionRepository transactionRepository;
     private final double confidenceThreshold;
+    private final Path imageDir;
 
     public AuditService(VisionAiClient visionAiClient,
                         FoodItemRepository itemRepository,
                         StockAuditRepository auditRepository,
                         StockTransactionRepository transactionRepository,
-                        @Value("${vision.confidence-threshold:0.5}") double confidenceThreshold) {
+                        @Value("${vision.confidence-threshold:0.5}") double confidenceThreshold,
+                        @Value("${vision.image-dir:./data/audit-images}") String imageDir) {
         this.visionAiClient = visionAiClient;
         this.itemRepository = itemRepository;
         this.auditRepository = auditRepository;
         this.transactionRepository = transactionRepository;
         this.confidenceThreshold = confidenceThreshold;
+        this.imageDir = Path.of(imageDir).toAbsolutePath().normalize();
     }
 
-    /** 1단계: 사진 → AI 인식 → DRAFT 실사 생성 */
-    public AuditResponse createAuditFromImage(Long storeId, byte[] imageBytes, String contentType) {
+    /** 1단계: 사진(냉장고·주류고·창고 등 여러 장) → AI 인식 → DRAFT 실사 생성 */
+    public AuditResponse createAuditFromImages(Long storeId, List<byte[]> images, String contentType) {
         List<FoodItem> allItems = itemRepository.findByStoreId(storeId);
         List<String> knownNames = allItems.stream().map(FoodItem::getName).toList();
 
-        VisionResult result = visionAiClient.recognize(imageBytes, contentType, knownNames);
+        VisionResult result = visionAiClient.recognize(images, contentType, knownNames);
 
         StockAudit audit = new StockAudit(storeId, "AI_VISION", result.rawResponse());
 
-        for (RecognizedItem recognized : result.items()) {
-            if (recognized.confidence() < confidenceThreshold) continue; // 신뢰도 낮으면 제외
-
-            FoodItem matched = matchByName(allItems, recognized.name());
-            int systemQty = matched != null ? matched.getQuantity() : 0;
-
-            audit.addLine(new AuditLine(matched, recognized.name(),
-                    systemQty, recognized.quantity(), recognized.confidence()));
+        for (AuditLine line : toLines(allItems, result.items())) {
+            audit.addLine(line);
         }
 
         if (audit.getLines().isEmpty()) {
             throw new IllegalStateException("사진에서 인식된 품목이 없습니다. 다시 촬영해 주세요.");
         }
+
+        for (byte[] image : images) {
+            audit.addImageFile(storeImage(image, contentType));
+        }
         return AuditResponse.from(auditRepository.save(audit));
+    }
+
+    /**
+     * 인식 결과 → 실사 라인.
+     * 사진 여러 장을 한 번에 보내면 같은 품목이 두 번 올라올 수 있는데, 그대로 두면
+     * 확정 시 같은 품목을 두 번 조정해 뒤 라인 값으로 덮어써진다 → 여기서 미리 합친다.
+     */
+    private List<AuditLine> toLines(List<FoodItem> allItems, List<RecognizedItem> recognizedItems) {
+        Map<String, AuditLine> merged = new LinkedHashMap<>();
+
+        for (RecognizedItem recognized : recognizedItems) {
+            if (recognized.confidence() < confidenceThreshold) continue; // 신뢰도 낮으면 제외
+
+            FoodItem matched = matchByName(allItems, recognized.name());
+            // 등록 품목이면 품목 기준으로, 미등록이면 이름(공백 무시) 기준으로 중복을 판단
+            String key = matched != null
+                    ? "item:" + matched.getId()
+                    : "name:" + recognized.name().replaceAll("\s", "").toLowerCase();
+
+            AuditLine existing = merged.get(key);
+            if (existing != null) {
+                existing.mergeRecognized(recognized.quantity(), recognized.confidence());
+                continue;
+            }
+            int systemQty = matched != null ? matched.getQuantity() : 0;
+            merged.put(key, new AuditLine(matched, recognized.name(),
+                    systemQty, recognized.quantity(), recognized.confidence()));
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    /** 실사 사진을 디스크에 저장하고 파일명을 돌려준다 (수량 조정의 근거 자료) */
+    private String storeImage(byte[] image, String contentType) {
+        String ext = contentType != null && contentType.contains("png") ? ".png" : ".jpg";
+        String fileName = UUID.randomUUID() + ext;
+        try {
+            Files.createDirectories(imageDir);
+            Files.write(imageDir.resolve(fileName), image);
+        } catch (IOException e) {
+            throw new UncheckedIOException("실사 사진 저장 실패: " + imageDir, e);
+        }
+        // ponytail: 로컬 디스크에 저장. 서버를 여러 대로 늘리거나 백업이 필요해지면 S3로.
+        return fileName;
+    }
+
+    /** 실사 사진 원본 읽기 — 다른 가게의 실사는 볼 수 없다 */
+    @Transactional(readOnly = true)
+    public byte[] readImage(Long storeId, Long auditId, int index) {
+        StockAudit audit = auditRepository.findById(auditId)
+                .orElseThrow(() -> new IllegalArgumentException("실사를 찾을 수 없습니다: " + auditId));
+        if (!audit.getStoreId().equals(storeId)) {
+            throw new IllegalArgumentException("실사를 찾을 수 없습니다: " + auditId);
+        }
+        List<String> files = audit.getImageFiles();
+        if (index < 0 || index >= files.size()) {
+            throw new IllegalArgumentException("실사 사진을 찾을 수 없습니다: " + index);
+        }
+        Path file = imageDir.resolve(files.get(index)).normalize();
+        if (!file.startsWith(imageDir)) {   // 저장 파일명은 UUID지만 경로 이탈은 한 번 더 막는다
+            throw new IllegalArgumentException("실사 사진을 찾을 수 없습니다: " + index);
+        }
+        try {
+            return Files.readAllBytes(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("실사 사진을 읽을 수 없습니다: " + file, e);
+        }
     }
 
     /** 2단계: 라인 수량 수동 보정 */

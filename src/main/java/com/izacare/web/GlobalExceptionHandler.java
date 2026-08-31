@@ -1,5 +1,6 @@
 package com.izacare.web;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -25,6 +26,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> forbidden(AccessDeniedException e) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+    }
+
+    /**
+     * 유니크 제약 위반 — 같은 요청이 동시에 여러 번 들어와 한 건만 통과한 경우.
+     * (출근 버튼 연타가 대표적) 날것의 500 대신 다시 확인하라고 알려준다.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> duplicate(DataIntegrityViolationException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "이미 처리된 요청입니다. 화면을 새로고침해 주세요."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

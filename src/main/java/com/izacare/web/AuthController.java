@@ -36,24 +36,23 @@ public class AuthController {
     private final NotificationService notificationService;
     private final SignupGuard signupGuard;
     private final LoginGuard loginGuard;
+    private final ClientIpResolver clientIpResolver;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
-
-    /** 리버스 프록시 뒤에 있을 때만 true. 기본 false — 헤더 위조로 잠금을 우회할 수 있기 때문. */
-    @Value("${app.trust-proxy:false}")
-    private boolean trustProxy;
 
     public AuthController(MemberRepository memberRepository,
                           StoreRepository storeRepository,
                           StoreCodeGenerator codeGenerator,
                           NotificationService notificationService,
                           SignupGuard signupGuard,
-                          LoginGuard loginGuard) {
+                          LoginGuard loginGuard,
+                          ClientIpResolver clientIpResolver) {
         this.memberRepository = memberRepository;
         this.storeRepository = storeRepository;
         this.codeGenerator = codeGenerator;
         this.notificationService = notificationService;
         this.signupGuard = signupGuard;
         this.loginGuard = loginGuard;
+        this.clientIpResolver = clientIpResolver;
     }
 
     /**
@@ -164,17 +163,7 @@ public class AuthController {
                 .orElse(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
     }
 
-    /**
-     * 클라이언트 IP.
-     * X-Forwarded-For는 클라이언트가 임의로 보낼 수 있어, 신뢰할 수 있는 프록시
-     * 뒤에 있을 때(app.trust-proxy=true)만 사용한다. 그렇지 않으면 요청마다
-     * 헤더를 바꿔 LoginGuard의 시도 횟수 잠금을 무한히 우회할 수 있다.
-     */
     private String clientIp(HttpServletRequest request) {
-        if (trustProxy) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 }

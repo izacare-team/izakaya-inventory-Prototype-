@@ -51,6 +51,16 @@ public class AuditLine {
     /** 확정 시 미등록 품목이 자동 등록되면 새 품목을 연결 */
     public void attachItem(FoodItem item) { this.item = item; }
 
+    /**
+     * 같은 품목이 다른 사진에서 또 인식됐을 때 합친다 (사진 여러 장을 한 실사로 묶는 경우).
+     * 신뢰도는 둘 중 낮은 쪽을 남긴다 — 한 장이라도 흐릿했으면 그 줄 전체를 의심해야 하므로.
+     */
+    public void mergeRecognized(int quantity, double confidence) {
+        this.recognizedQuantity += quantity;
+        this.finalQuantity = this.recognizedQuantity;
+        this.confidence = Math.min(this.confidence, confidence);
+    }
+
     /** 사용자가 오인식을 바로잡을 때 */
     public void overrideFinalQuantity(int quantity) {
         if (quantity < 0) throw new IllegalArgumentException("수량은 0 이상이어야 합니다.");

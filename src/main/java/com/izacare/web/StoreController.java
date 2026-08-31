@@ -37,6 +37,8 @@ public class StoreController {
     private final ReportHistoryRepository reportHistoryRepository;
     private final CommentHistoryRepository commentHistoryRepository;
     private final NotificationService notificationService;
+    private final StoreRepository storeRepository;
+    private final ClientIpResolver clientIpResolver;
 
     public StoreController(NoticeRepository noticeRepository,
                            AttendanceRepository attendanceRepository,
@@ -49,7 +51,9 @@ public class StoreController {
                            NoticeHistoryRepository noticeHistoryRepository,
                            ReportHistoryRepository reportHistoryRepository,
                            CommentHistoryRepository commentHistoryRepository,
-                           NotificationService notificationService) {
+                           NotificationService notificationService,
+                           StoreRepository storeRepository,
+                           ClientIpResolver clientIpResolver) {
         this.noticeRepository = noticeRepository;
         this.attendanceRepository = attendanceRepository;
         this.reportRepository = reportRepository;
@@ -62,6 +66,8 @@ public class StoreController {
         this.noticeHistoryRepository = noticeHistoryRepository;
         this.reportHistoryRepository = reportHistoryRepository;
         this.notificationService = notificationService;
+        this.storeRepository = storeRepository;
+        this.clientIpResolver = clientIpResolver;
     }
 
     private Member loginMember(HttpServletRequest request) {
@@ -168,14 +174,37 @@ public class StoreController {
 
     // ================= 출근 =================
 
-    public record ClockRequest(@NotBlank String action) {}
+    /** 위경도는 브라우저가 위치 권한을 줬을 때만 채워진다 — 없어도 출근은 정상 처리된다 */
+    public record ClockRequest(@NotBlank String action, Double latitude, Double longitude) {}
     public record AttendanceResponse(Long id, String staffName, LocalDate workDate,
-                                     LocalTime clockIn, LocalTime breakAt, LocalTime breakEnd,
-                                     LocalTime clockOut) {
+                                     LocalTime clockIn, LocalTime breakAt,
+                                     LocalTime breakEnd, LocalTime clockOut,
+                                     String locationCheck, Integer distanceMeters,
+                                     String locationLabel) {
         static AttendanceResponse from(Attendance a) {
             return new AttendanceResponse(a.getId(), a.getStaffName(), a.getWorkDate(),
-                    a.getClockIn(), a.getBreakAt(), a.getBreakEnd(), a.getClockOut());
+                    a.getClockIn(), a.getBreakAt(), a.getBreakEnd(), a.getClockOut(),
+                    a.getClockInLocation() == null ? null : a.getClockInLocation().name(),
+                    a.getClockInDistance(),
+                    StoreController.locationLabel(a));
         }
+    }
+
+    /** 근태 화면과 대시보드가 같은 문구를 쓰도록 한곳에서 만든다 */
+    static String locationLabel(Attendance a) {
+        if (a.getClockInLocation() == null) return null;
+        return switch (a.getClockInLocation()) {
+            case GPS_OK -> "매장에서 출근"
+                    + (a.getClockInDistance() == null ? "" : " · " + a.getClockInDistance() + "m");
+            case IP_OK -> "매장 Wi-Fi에서 출근";
+            case OUTSIDE -> "⚠ 매장 밖에서 출근"
+                    + (a.getClockInDistance() == null ? "" : " · " + formatDistance(a.getClockInDistance()));
+            case UNKNOWN -> "⚠ 위치 미확인";
+        };
+    }
+
+    private static String formatDistance(int meters) {
+        return meters >= 1000 ? String.format("%.1fkm", meters / 1000.0) : meters + "m";
     }
 
     @GetMapping("/attendance/today")
@@ -185,7 +214,8 @@ public class StoreController {
         String name = me.getDisplayName();
         return attendanceRepository.findByStoreIdAndStaffNameAndWorkDate(me.getStoreId(), name, LocalDate.now())
                 .map(AttendanceResponse::from)
-                .orElse(new AttendanceResponse(null, name, LocalDate.now(), null, null, null, null));
+                .orElse(new AttendanceResponse(null, name, LocalDate.now(),
+                        null, null, null, null, null, null, null));
     }
 
     @PostMapping("/attendance/clock")
@@ -198,7 +228,40 @@ public class StoreController {
                 .orElseGet(() -> attendanceRepository.save(
                         new Attendance(me.getStoreId(), name, LocalDate.now())));
         attendance.mark(req.action(), LocalTime.now().withSecond(0).withNano(0));
+
+        if ("clock-in".equals(req.action())) {
+            checkClockInLocation(attendance, me.getStoreId(), req, request);
+        }
         return AttendanceResponse.from(attendance);
+    }
+
+    /**
+     * 출근 위치 확인 — GPS 반경과 매장 Wi-Fi IP 중 하나라도 통과하면 정상으로 본다.
+     * 실내에서는 GPS가 안 잡히고 LTE로 접속하면 IP가 안 맞으므로 서로의 빈틈을 메운다.
+     * 어느 쪽도 통과 못 해도 출근은 막지 않고 기록만 남긴다.
+     */
+    private void checkClockInLocation(Attendance attendance, Long storeId,
+                                      ClockRequest req, HttpServletRequest request) {
+        Store store = storeRepository.findById(storeId).orElse(null);
+        if (store == null) {
+            attendance.recordClockInLocation(Attendance.LocationCheck.UNKNOWN, null);
+            return;
+        }
+        Integer distance = (req.latitude() != null && req.longitude() != null)
+                ? store.distanceMeters(req.latitude(), req.longitude())
+                : null;
+
+        Attendance.LocationCheck check;
+        if (distance != null && store.isWithinRadius(distance)) {
+            check = Attendance.LocationCheck.GPS_OK;
+        } else if (store.matchesAllowedIp(clientIpResolver.resolve(request))) {
+            check = Attendance.LocationCheck.IP_OK;
+        } else if (distance != null) {
+            check = Attendance.LocationCheck.OUTSIDE;
+        } else {
+            check = Attendance.LocationCheck.UNKNOWN;
+        }
+        attendance.recordClockInLocation(check, distance);
     }
 
     // ================= 일보 =================
