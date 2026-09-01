@@ -47,15 +47,14 @@ public class ScheduleController {
         }
     }
 
-    private Long storeId(HttpServletRequest request) {
-        return ((Member) request.getAttribute("loginMember")).getStoreId();
-    }
-
     @GetMapping
     @Transactional(readOnly = true)
     public List<ScheduleResponse> byDate(@RequestParam LocalDate date, HttpServletRequest request) {
-        return scheduleRepository.findByStoreIdAndWorkDateOrderByStartTimeAsc(storeId(request), date)
-                .stream().map(ScheduleResponse::from).toList();
+        Member me = (Member) request.getAttribute("loginMember");
+        return scheduleRepository.findByStoreIdAndWorkDateOrderByStartTimeAsc(me.getStoreId(), date)
+                .stream()
+                .filter(s -> me.isOwner() || s.getMember().getId().equals(me.getId()))
+                .map(ScheduleResponse::from).toList();
     }
 
     /** 달력 표시용 월 단위 조회 */
@@ -63,11 +62,14 @@ public class ScheduleController {
     @Transactional(readOnly = true)
     public List<ScheduleResponse> byMonth(@RequestParam int year, @RequestParam int month,
                                           HttpServletRequest request) {
+        Member me = (Member) request.getAttribute("loginMember");
         LocalDate start = LocalDate.of(year, month, 1);
         LocalDate end = start.plusMonths(1).minusDays(1);
         return scheduleRepository.findByStoreIdAndWorkDateBetweenOrderByWorkDateAscStartTimeAsc(
-                        storeId(request), start, end)
-                .stream().map(ScheduleResponse::from).toList();
+                        me.getStoreId(), start, end)
+                .stream()
+                .filter(s -> me.isOwner() || s.getMember().getId().equals(me.getId()))
+                .map(ScheduleResponse::from).toList();
     }
 
     /** 스케줄 등록 (사장님 전용) — 등록되면 해당 직원에게 알림 발송 */

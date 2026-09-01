@@ -276,14 +276,18 @@ async function doSignup() {
     if (isOwner && r.storeCode) {
       // 사장님: 발급된 가게 코드를 크게 안내
       $view.innerHTML = topbar('가게 개설 완료', 'login') + html`
-        <div class="sketch" style="padding:24px; text-align:center; margin-top:20px">
-          <p style="font-weight:700; font-size:1.2rem">${r.storeName}</p>
-          <p class="hint">${r.message}</p>
-          <div style="font-size:2.2rem; font-weight:700; letter-spacing:4px;
-                      background:var(--yellow); border:2.5px solid var(--ink);
-                      border-radius:12px; padding:14px; margin:16px 0">${r.storeCode}</div>
-          <p class="hint">직원은 이 코드로 가입·로그인합니다. 가게 설정에서 다시 볼 수 있어요.</p>
-          <button class="act" style="margin-top:10px" onclick="go('login')">로그인하러 가기</button>
+        <div style="margin-top:20px">
+          <p style="text-align:center; font-weight:700; font-size:1.2rem; margin:0 0 4px">${r.storeName}</p>
+          <p class="hint" style="text-align:center; margin:0 0 14px">${r.message}</p>
+          <div class="code-card">
+            <div class="code-card-label">가게 코드 · 직원 가입/로그인용</div>
+            <div class="code-card-value">
+              <span class="code-text">${r.storeCode}</span>
+              <button class="code-copy" onclick="copyCode(event, '${r.storeCode}')">📋 복사</button>
+            </div>
+            <p class="code-hint">직원은 이 코드로 가입·로그인합니다. 가게 설정에서 다시 볼 수 있어요.</p>
+          </div>
+          <div style="text-align:center"><button class="act" onclick="go('login')">로그인하러 가기</button></div>
         </div>`;
       return;
     }
@@ -1128,14 +1132,18 @@ async function viewCalendar(keepMonth) {
     api(`/api/schedules/month?year=${calY}&month=${calM}`)
   ]);
   const events = {};
-  const addEv = (date, text) => { (events[date] ??= []).push(text); };
+  const types = {};
+  const addEv = (date, text, type) => {
+    (events[date] ??= []).push(text);
+    (types[date] ??= new Set()).add(type);
+  };
   notices.filter(n => n.eventDate?.startsWith(`${calY}-${String(calM).padStart(2, '0')}`))
-         .forEach(n => addEv(n.eventDate, `📢 ${n.title}`));
+         .forEach(n => addEv(n.eventDate, `📢 ${n.title}`, 'notice'));
   reservations.forEach(r => addEv(r.reserveDate,
-      `📅 예약 ${r.timeSlot} ${r.people}명 (테이블 ${r.tableNumbers.join(', ')})`));
+      `📅 예약 ${r.timeSlot} ${r.people}명 (테이블 ${r.tableNumbers.join(', ')})`, 'resv'));
   schedules.forEach(s => addEv(s.workDate,
       `🕒 ${s.memberName} 근무 ${s.startTime ? s.startTime.slice(0, 5) : ''}`
-      + `${s.endTime ? '~' + s.endTime.slice(0, 5) : ''}`));
+      + `${s.endTime ? '~' + s.endTime.slice(0, 5) : ''}`, 'sched'));
 
   const grid = document.getElementById('calGrid');
   grid.innerHTML = ['일','월','화','수','목','금','토'].map((d, i) =>
@@ -1152,9 +1160,17 @@ async function viewCalendar(keepMonth) {
     grid.innerHTML += html`<button class="cal-cell ${dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''}`
       + html`${dateStr === today() ? ' today' : ''}" onclick="showDay('${dateStr}', this)">`
       + html`<span class="d">${d}</span>`
-      + html`${events[dateStr] ? html`<span class="dot"></span>` : ''}</button>`;
+      + html`${calDots(types[dateStr])}</button>`;
   }
   window._calEvents = events;
+}
+
+/** 날짜별 점 — 공지=빨강, 근무=보라, 예약=노랑. 여러 종류면 나란히 표시. */
+function calDots(set) {
+  if (!set || set.size === 0) return '';
+  const dots = ['notice', 'sched', 'resv'].filter(t => set.has(t))
+      .map(c => `<span class="dot ${c}"></span>`).join('');
+  return new SafeHtml(`<span class="cal-dots">${dots}</span>`);
 }
 function moveMonth(d) {
   calM += d;
