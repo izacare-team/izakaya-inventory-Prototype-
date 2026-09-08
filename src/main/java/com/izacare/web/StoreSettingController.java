@@ -3,6 +3,7 @@ package com.izacare.web;
 import com.izacare.domain.Course;
 import com.izacare.domain.DiningTable;
 import com.izacare.domain.Member;
+import com.izacare.domain.Reservation;
 import com.izacare.domain.Store;
 import com.izacare.repository.CourseRepository;
 import com.izacare.repository.DiningTableRepository;
@@ -78,7 +79,7 @@ public class StoreSettingController {
     @Transactional(readOnly = true)
     public StoreInfo info(HttpServletRequest request) {
         Store s = myStore(request);
-        List<TableInfo> tables = tableRepository.findByStoreIdOrderByTableNumberAsc(s.getId()).stream()
+        List<TableInfo> tables = tableRepository.findByStoreIdAndActiveTrueOrderByTableNumberAsc(s.getId()).stream()
                 .map(t -> new TableInfo(t.getId(), t.getTableNumber(), t.getCapacity())).toList();
         List<CourseInfo> courses = courseRepository.findByStoreIdOrderByIdAsc(s.getId()).stream()
                 .map(c -> new CourseInfo(c.getId(), c.getName(), c.getDurationMinutes(), c.isUnlimitedRefill()))
@@ -102,27 +103,54 @@ public class StoreSettingController {
         return info(request);
     }
 
+    /**
+     * 테이블 추가. 같은 번호를 예전에 치운 적이 있으면 그 행을 새 정원으로 되살린다 —
+     * (store_id, tableNumber) 유니크 제약 때문에 새 행을 넣을 수 없기도 하고,
+     * 그렇게 해야 그 번호를 쓰던 지난 예약 기록도 그대로 이어진다.
+     */
     @PostMapping("/tables")
     @ResponseStatus(HttpStatus.CREATED)
     public StoreInfo addTable(@Valid @RequestBody TableAddRequest req, HttpServletRequest request) {
         requireOwner(request);
         Long storeId = me(request).getStoreId();
-        if (tableRepository.existsByStoreIdAndTableNumber(storeId, req.number())) {
-            throw new IllegalArgumentException(req.number() + "번 테이블이 이미 있습니다.");
+        DiningTable existing = tableRepository
+                .findByStoreIdAndTableNumber(storeId, req.number()).orElse(null);
+
+        if (existing != null) {
+            if (existing.isActive()) {
+                throw new IllegalArgumentException(req.number() + "번 테이블이 이미 있습니다.");
+            }
+            existing.reactivate(req.capacity());
+        } else {
+            tableRepository.save(new DiningTable(storeId, req.number(), req.capacity()));
         }
-        tableRepository.save(new DiningTable(storeId, req.number(), req.capacity()));
         return info(request);
     }
 
+    /**
+     * 테이블 삭제.
+     * 사용중인 예약이 걸려 있으면 거부하고, 지난 예약 기록만 있으면 목록에서 감춘다.
+     * 예약 기록이 아예 없을 때만 행을 지운다.
+     */
     @DeleteMapping("/tables/{id}")
     public StoreInfo removeTable(@PathVariable Long id, HttpServletRequest request) {
         requireOwner(request);
         DiningTable t = tableRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("테이블을 찾을 수 없습니다."));
-        if (!t.getStoreId().equals(me(request).getStoreId())) {
+        Long storeId = me(request).getStoreId();
+        if (!t.getStoreId().equals(storeId)) {
             throw new IllegalArgumentException("우리 가게 테이블이 아닙니다.");
         }
-        tableRepository.delete(t);
+        if (reservationRepository.existsByStoreIdAndStatusAndTables_Id(
+                storeId, Reservation.Status.ACTIVE, t.getId())) {
+            throw new IllegalStateException(t.getTableNumber()
+                    + "번 테이블은 사용중인 예약이 있어 삭제할 수 없습니다. 공석 처리 후 다시 시도해 주세요.");
+        }
+        if (reservationRepository.existsByTables_Id(t.getId())) {
+            t.deactivate();   // 지난 예약이 참조하므로 행은 남기고 목록에서만 감춘다
+        } else {
+            tableRepository.delete(t);
+        }
         return info(request);
     }
 

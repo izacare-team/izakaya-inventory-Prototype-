@@ -1,6 +1,7 @@
 package com.izacare.domain;
 
 import jakarta.persistence.*;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
@@ -49,6 +50,13 @@ public class Store {
     public static final int DEFAULT_ATTENDANCE_RADIUS = 200;
     private static final int EARTH_RADIUS_M = 6_371_000;
 
+    /** 영업시간을 아직 안 정했거나 자정 전에 닫는 매장의 영업일 경계 */
+    private static final LocalTime DEFAULT_DAY_CUTOFF = LocalTime.of(6, 0);
+    /** 경계를 이보다 늦게 잡지는 않는다 — 아침 근무까지 전날로 삼켜 버리면 곤란하다 */
+    private static final LocalTime MAX_DAY_CUTOFF = LocalTime.of(9, 0);
+    /** 마감 후 정리 근무까지 같은 영업일로 묶어 주는 여유 */
+    private static final int CLOSING_GRACE_HOURS = 2;
+
     public Store(String name, String code) {
         this.name = name;
         this.code = code;
@@ -76,6 +84,34 @@ public class Store {
 
     public void setAllowedIp(String allowedIp) {
         this.allowedIp = (allowedIp == null || allowedIp.isBlank()) ? null : allowedIp.trim();
+    }
+
+    /**
+     * 이 시각이 속한 영업일.
+     * 심야 영업이라 새벽 2시 퇴근이 흔한데, 달력 날짜를 그대로 쓰면 그게 "다음 날"이 되어
+     * 출근 기록이 없는 새 날짜에 퇴근을 찍으려다 거부당한다. 경계 시각 이전은 전날로 친다.
+     */
+    public LocalDate businessDayOf(LocalDateTime now) {
+        return now.toLocalTime().isBefore(dayCutoff())
+                ? now.toLocalDate().minusDays(1)
+                : now.toLocalDate();
+    }
+
+    /**
+     * 영업일이 넘어가는 시각 — 이 시각 이전은 아직 전날 영업일이다.
+     * 기본은 새벽 6시. 새벽 6시까지 출근을 찍는 이자카야는 없으니 이 정도면 안전하다.
+     * 마감이 유난히 늦은 매장(예: 새벽 5시 마감)만 그만큼 경계를 뒤로 늘린다. 앞당기지는 않는다.
+     */
+    LocalTime dayCutoff() {
+        // 종료가 개점보다 이르면 자정을 넘겨 영업하는 매장
+        if (businessOpen != null && businessClose != null && businessClose.isBefore(businessOpen)) {
+            LocalTime cutoff = businessClose.plusHours(CLOSING_GRACE_HOURS);
+            // isAfter(businessClose): 여유를 더하다 자정을 또 넘긴 이상한 설정은 버린다
+            if (cutoff.isAfter(businessClose) && cutoff.isAfter(DEFAULT_DAY_CUTOFF)) {
+                return cutoff.isAfter(MAX_DAY_CUTOFF) ? MAX_DAY_CUTOFF : cutoff;
+            }
+        }
+        return DEFAULT_DAY_CUTOFF;
     }
 
     /** 매장까지의 거리(m). 매장 좌표가 아직 설정되지 않았으면 null */

@@ -7,6 +7,7 @@ import com.izacare.repository.AttendanceRepository;
 import com.izacare.repository.FoodItemRepository;
 import com.izacare.repository.NotificationRepository;
 import com.izacare.repository.ReservationRepository;
+import com.izacare.repository.StoreRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -27,15 +29,28 @@ public class DashboardController {
     private final AttendanceRepository attendanceRepository;
     private final FoodItemRepository itemRepository;
     private final NotificationRepository notificationRepository;
+    private final StoreRepository storeRepository;
 
     public DashboardController(ReservationRepository reservationRepository,
                               AttendanceRepository attendanceRepository,
                               FoodItemRepository itemRepository,
-                              NotificationRepository notificationRepository) {
+                              NotificationRepository notificationRepository,
+                              StoreRepository storeRepository) {
         this.reservationRepository = reservationRepository;
         this.attendanceRepository = attendanceRepository;
         this.itemRepository = itemRepository;
         this.notificationRepository = notificationRepository;
+        this.storeRepository = storeRepository;
+    }
+
+    /**
+     * 대시보드가 보여줄 "지금 돌아가는 영업일".
+     * 자정을 넘겨 영업하면 새벽 1시에도 어제 저녁 예약과 근무자를 봐야 하므로 달력 날짜를 쓰지 않는다.
+     */
+    private LocalDate businessToday(Long storeId) {
+        return storeRepository.findById(storeId)
+                .map(s -> s.businessDayOf(LocalDateTime.now()))
+                .orElseGet(LocalDate::now);
     }
 
     public record Dashboard(long todayReservations, long onDutyCount,
@@ -59,7 +74,7 @@ public class DashboardController {
         Member me = (Member) request.getAttribute("loginMember");
         if (!me.isOwner()) throw new AccessDeniedException();
         Long storeId = me.getStoreId();
-        LocalDate today = LocalDate.now();
+        LocalDate today = businessToday(storeId);
 
         long todayReservations = reservationRepository
                 .findByStoreIdAndReserveDateOrderByTimeSlotAsc(storeId, today).size();
@@ -84,7 +99,7 @@ public class DashboardController {
         Member me = (Member) request.getAttribute("loginMember");
         if (!me.isOwner()) throw new AccessDeniedException();
         Long storeId = me.getStoreId();
-        LocalDate today = LocalDate.now();
+        LocalDate today = businessToday(storeId);
         DateTimeFormatter hhmm = DateTimeFormatter.ofPattern("HH:mm");
 
         List<DetailRow> reservations = reservationRepository
