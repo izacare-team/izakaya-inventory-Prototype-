@@ -88,7 +88,11 @@ const $view = document.getElementById('view');
 let me = null;                  // 로그인 사용자 {id, username, displayName, role}
 const isOwner = () => me?.role === 'OWNER';
 const fmtD = d => d ? d.replaceAll('-', '/').slice(5) : '';   // 2026-08-20 → 08/20
-const today = () => new Date().toISOString().slice(0, 10);
+// toISOString()은 UTC라 한국 시간 새벽 0~9시에 날짜가 하루 밀린다 — 시차만큼 당겨서 현지 날짜를 얻는다
+const today = () => {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
 
 async function api(url, opt) {
   const res = await fetch(url, opt);
@@ -1044,7 +1048,7 @@ async function cancelAudit() {
 /* ===================== 출근 ===================== */
 async function viewAttendance() {
   $view.innerHTML = topbar('출근', 'home') + html`
-    <p class="page-sub">${me.displayName}님의 근태 · ${today()}</p>
+    <p class="page-sub" id="atDay">${me.displayName}님의 근태</p>
     <div class="clock-list" id="clockList">불러오는 중...</div>
     <p id="atMsg" class="msg" style="text-align:center"></p>`;
   loadAttendance();
@@ -1052,6 +1056,13 @@ async function viewAttendance() {
 async function loadAttendance() {
   const a = await api('/api/attendance/today');
   const t = v => v ? v.slice(0, 5) : '';
+  // 자정을 넘겨 일하는 중이면 달력 날짜와 영업일이 다르다 — 어느 날 근무로 기록되는지 밝혀 준다
+  const day = document.getElementById('atDay');
+  if (day) {
+    day.innerHTML = html`${me.displayName}님의 근태 · ${a.workDate}`
+      + (a.workDate !== today()
+         ? html`<span class="hint"> (심야 근무 — ${fmtD(a.workDate)} 영업일로 기록됩니다)</span>` : '');
+  }
   // 각 단계는 하루에 한 번만 — 이미 찍었거나 아직 순서가 아니면 버튼을 잠근다
   const steps = [
     { action: 'clock-in',  label: '출근',      at: a.clockIn,  ready: !a.clockIn },

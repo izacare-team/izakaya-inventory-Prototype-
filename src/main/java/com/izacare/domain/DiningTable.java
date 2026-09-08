@@ -24,6 +24,15 @@ public class DiningTable {
 
     private int capacity;
 
+    /**
+     * 사용중인 테이블인지. 예약 기록이 걸린 테이블은 지워도 행을 남기고 이 값만 내린다 —
+     * 물리 삭제하면 reservation_tables 외래키에 막혀 아예 지워지지 않고,
+     * 지난 예약이 어느 테이블이었는지도 잃어버리기 때문.
+     */
+    // 파일 DB에 이미 행이 있어서 기본값 없이 NOT NULL 컬럼을 붙이면 ddl-auto=update가 실패한다
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean active = true;
+
     protected DiningTable() {}
 
     public DiningTable(Long storeId, int tableNumber, int capacity) {
@@ -34,8 +43,18 @@ public class DiningTable {
 
     public void changeCapacity(int capacity) { this.capacity = capacity; }
 
+    /** 목록·좌석 맵에서 감춘다. 지난 예약이 참조하는 행 자체는 남는다 */
+    public void deactivate() { this.active = false; }
+
+    /** 같은 번호로 다시 등록할 때 — 감춰 둔 행을 새 정원으로 되살린다 */
+    public void reactivate(int capacity) {
+        this.active = true;
+        this.capacity = capacity;
+    }
+
     public Long getId() { return id; }
     public Long getStoreId() { return storeId; }
     public int getTableNumber() { return tableNumber; }
     public int getCapacity() { return capacity; }
+    public boolean isActive() { return active; }
 }

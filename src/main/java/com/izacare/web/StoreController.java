@@ -207,14 +207,25 @@ public class StoreController {
         return meters >= 1000 ? String.format("%.1fkm", meters / 1000.0) : meters + "m";
     }
 
+    /**
+     * 지금이 속한 영업일. 매장이 자정을 넘겨 영업하면 새벽 시간대는 아직 전날 근무다.
+     * 매장을 못 찾는 예외적인 경우에만 달력 날짜로 물러선다.
+     */
+    private LocalDate businessToday(Long storeId) {
+        return storeRepository.findById(storeId)
+                .map(s -> s.businessDayOf(LocalDateTime.now()))
+                .orElseGet(LocalDate::now);
+    }
+
     @GetMapping("/attendance/today")
     @Transactional(readOnly = true)
     public AttendanceResponse todayAttendance(HttpServletRequest request) {
         Member me = loginMember(request);
         String name = me.getDisplayName();
-        return attendanceRepository.findByStoreIdAndStaffNameAndWorkDate(me.getStoreId(), name, LocalDate.now())
+        LocalDate workDate = businessToday(me.getStoreId());
+        return attendanceRepository.findByStoreIdAndStaffNameAndWorkDate(me.getStoreId(), name, workDate)
                 .map(AttendanceResponse::from)
-                .orElse(new AttendanceResponse(null, name, LocalDate.now(),
+                .orElse(new AttendanceResponse(null, name, workDate,
                         null, null, null, null, null, null, null));
     }
 
@@ -223,10 +234,11 @@ public class StoreController {
                                     HttpServletRequest request) {
         Member me = loginMember(request);
         String name = me.getDisplayName();
+        LocalDate workDate = businessToday(me.getStoreId());
         Attendance attendance = attendanceRepository
-                .findByStoreIdAndStaffNameAndWorkDate(me.getStoreId(), name, LocalDate.now())
+                .findByStoreIdAndStaffNameAndWorkDate(me.getStoreId(), name, workDate)
                 .orElseGet(() -> attendanceRepository.save(
-                        new Attendance(me.getStoreId(), name, LocalDate.now())));
+                        new Attendance(me.getStoreId(), name, workDate)));
         attendance.mark(req.action(), LocalTime.now().withSecond(0).withNano(0));
 
         if ("clock-in".equals(req.action())) {
@@ -460,7 +472,7 @@ public class StoreController {
     public List<TableResponse> tables(@RequestParam LocalDate date, @RequestParam String timeSlot,
                                       HttpServletRequest request) {
         Long storeId = sid(request);
-        return tableRepository.findByStoreIdOrderByTableNumberAsc(storeId).stream()
+        return tableRepository.findByStoreIdAndActiveTrueOrderByTableNumberAsc(storeId).stream()
                 .map(t -> new TableResponse(t.getId(), t.getTableNumber(), t.getCapacity(),
                         reservationRepository.existsByStoreIdAndReserveDateAndStatusAndTables_Id(
                                 storeId, date, Reservation.Status.ACTIVE, t.getId())))
@@ -517,6 +529,9 @@ public class StoreController {
                     .orElseThrow(() -> new IllegalArgumentException("테이블을 찾을 수 없습니다: " + tableId));
             if (!t.getStoreId().equals(storeId)) {
                 throw new IllegalArgumentException("우리 가게 테이블이 아닙니다.");
+            }
+            if (!t.isActive()) {   // 화면에는 안 보이지만 id를 직접 넘기면 들어올 수 있다
+                throw new IllegalArgumentException("치운 테이블입니다: " + t.getTableNumber() + "번");
             }
             if (reservationRepository.existsByStoreIdAndReserveDateAndStatusAndTables_Id(
                     storeId, req.reserveDate(), Reservation.Status.ACTIVE, tableId)) {
