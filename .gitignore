@@ -1,6 +1,7 @@
 # ===== Gradle =====
 .gradle/
 build/
+profile/
 !gradle/wrapper/gradle-wrapper.jar
 
 # ===== IntelliJ =====
@@ -43,3 +44,6 @@ logs/
 
 # Playwright MCP 임시 산출물
 .playwright-mcp/
+
+# ===== 산출물 문서 (저장소에 올리지 않음) =====
+docs/
