@@ -789,9 +789,15 @@ input.num {
 .cal-cell.today .d { background: var(--blue); color: var(--on-accent); font-weight: 800; }
 .cal-cell.sel .d   { box-shadow: inset 0 0 0 2px var(--blue); }
 .cal-cell.sel.today .d { box-shadow: inset 0 0 0 2px var(--ink); }
-.cal-cell .dot {
-  width: 4px; height: 4px; border-radius: 50%; background: var(--purple);
+.cal-cell .cal-dots {
+  display: flex; gap: 3px; justify-content: center; min-height: 5px;
 }
+.cal-cell .dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--purple);
+}
+.cal-cell .dot.notice { background: var(--red); }     /* 전체 공지 */
+.cal-cell .dot.sched  { background: var(--purple); }  /* 내 근무 */
+.cal-cell .dot.resv   { background: var(--yellow); }  /* 예약 */
 .day-events { margin-top: 14px; }
 .day-events li { margin-bottom: 6px; }
 
